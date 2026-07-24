@@ -26,7 +26,7 @@ const THEME_BEHAVIORS: {
     connectionMode: ConnectionMode.Loose,
   },
   focus: {
-    isPanAndDrag: true,
+    isPanAndDrag: false,
     nodeComponent: SolarSystemNodeFocus,
     connectionMode: ConnectionMode.Loose,
   },
