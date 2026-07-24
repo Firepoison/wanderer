@@ -173,6 +173,7 @@ export const THEME_OPTIONS = [
   { label: 'Default', value: AvailableThemes.default },
   { label: 'Default Large', value: AvailableThemes.accessibleLarge },
   { label: 'Pathfinder', value: AvailableThemes.pathfinder },
+  { label: 'Chain Focus', value: AvailableThemes.focus },
   { label: 'High-contrast', value: AvailableThemes.accessibleDark },
   { label: 'High-contrast Large', value: AvailableThemes.accessibleLargeColorblind },
 ];
