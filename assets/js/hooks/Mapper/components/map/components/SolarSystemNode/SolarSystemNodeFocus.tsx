@@ -98,16 +98,6 @@ export const SolarSystemNodeFocus = memo((props: NodeProps<MapSolarSystemType>) 
         {nodeVars.visible && (
           <>
             <div className={classes.HeadRow}>
-              <div
-                className={clsx(
-                  classes.classTitle,
-                  nodeVars.classTitleColor,
-                  '[text-shadow:_0_1px_0_rgb(0_0_0_/_40%)]',
-                )}
-              >
-                {nodeVars.classTitle ?? '-'}
-              </div>
-
               {nodeVars.tag != null && nodeVars.tag !== '' && (
                 <div className={clsx(classes.TagTitle)}>{nodeVars.tag}</div>
               )}
@@ -134,7 +124,17 @@ export const SolarSystemNodeFocus = memo((props: NodeProps<MapSolarSystemType>) 
               )}
             </div>
 
-            <div className={clsx(classes.BottomRow, 'flex items-center justify-end w-full')}>
+            <div className={clsx(classes.BottomRow, 'flex items-center justify-between w-full')}>
+              <div
+                className={clsx(
+                  classes.classTitle,
+                  nodeVars.classTitleColor,
+                  '[text-shadow:_0_1px_0_rgb(0_0_0_/_40%)]',
+                )}
+              >
+                {nodeVars.classTitle ?? '-'}
+              </div>
+
               <div className="flex items-center gap-1 justify-end">
                 <div className={clsx('flex items-center gap-1')}>
                   {nodeVars.locked && <i className={clsx(PrimeIcons.LOCK, classes.lockIcon)} />}
