@@ -178,7 +178,7 @@ defmodule WandererAppWeb.MapsLive do
           active_settings_tab: "general",
           is_adding_subscription?: false,
           selected_subscription: nil,
-          options_form: options_form_data |> to_form(),
+          options_form: options_form_data |> _to_options_form(),
           layout_options: [
             {"Left To Right", "left_to_right"},
             {"Top To Bottom", "top_to_bottom"}
@@ -192,7 +192,9 @@ defmodule WandererAppWeb.MapsLive do
             {"Members", "add_system"},
             {"Administrators", "admin_map"},
             {"Managers", "manage_map"}
-          ]
+          ],
+          auto_layout_engine_options: WandererApp.Map.LayoutEngines.engine_choices(),
+          auto_layout_option_specs: _layout_option_specs(options_form_data)
         )
         |> allow_upload(:settings,
           accept: ~w(.json),
@@ -564,7 +566,12 @@ defmodule WandererAppWeb.MapsLive do
         options_form,
         %{assigns: %{map_id: map_id, map: map}} = socket
       ) do
-    options =
+    # Whitelist of the keys the settings forms are allowed to change. "root_system_id" is
+    # deliberately absent: the root node is set only from the map canvas ("Set as root node"),
+    # so this menu cannot change it even via a crafted payload. Engine-specific settings arrive
+    # as "auto_layout_opt_*" fields and are folded into "auto_layout_options" below, so no
+    # per-engine key ever needs listing here.
+    changed =
       options_form
       |> Map.take([
         "layout",
@@ -574,8 +581,31 @@ defmodule WandererAppWeb.MapsLive do
         "show_temp_system_name",
         "restrict_offline_showing",
         "allowed_copy_for",
-        "allowed_paste_for"
+        "allowed_paste_for",
+        "auto_layout_enabled",
+        "auto_layout_engine"
       ])
+
+    # The settings tabs each render a *subset* of the options as their own form, so the payload
+    # only ever carries the submitting tab's fields. Merge over the persisted options to keep
+    # the rest, and re-assign the merged result (not the raw params) — assigning the params
+    # would leave the other tab's inputs with no value, rendering them blank/first-option and
+    # silently persisting those wrong values on its next change.
+    {:ok, current_options} = WandererApp.MapRepo.options_to_form_data(map)
+    merged = Map.merge(current_options, changed)
+
+    # Engine-specific settings are one JSON bag rather than top-level keys, so the layout tab's
+    # "auto_layout_opt_*" fields are folded in here. Other tabs carry none and leave it alone.
+    options =
+      if _has_layout_option_fields?(options_form) do
+        Map.put(
+          merged,
+          "auto_layout_options",
+          WandererApp.Map.LayoutEngines.from_form_fields(options_form, merged)
+        )
+      else
+        merged
+      end
 
     {:ok, updated_map} = WandererApp.MapRepo.update_options(map, options)
 
@@ -585,7 +615,13 @@ defmodule WandererAppWeb.MapsLive do
       {:options_updated, map_id, options}
     )
 
-    {:noreply, socket |> assign(map: updated_map, options_form: options_form)}
+    {:noreply,
+     socket
+     |> assign(
+       map: updated_map,
+       options_form: _to_options_form(options),
+       auto_layout_option_specs: _layout_option_specs(options)
+     )}
   end
 
   @impl true
@@ -668,6 +704,23 @@ defmodule WandererAppWeb.MapsLive do
       {:noreply, socket}
     end
   end
+
+  # The layout tab renders one select per option the *selected* engine declares, so the form
+  # needs those values flattened into "auto_layout_opt_*" fields alongside the stored options.
+  defp _to_options_form(options),
+    do:
+      options
+      |> Map.merge(WandererApp.Map.LayoutEngines.to_form_fields(options))
+      |> to_form()
+
+  defp _layout_option_specs(options),
+    do:
+      options
+      |> Map.get("auto_layout_engine")
+      |> WandererApp.Map.LayoutEngines.options_for()
+
+  defp _has_layout_option_fields?(params),
+    do: Enum.any?(params, fn {key, _} -> String.starts_with?(key, "auto_layout_opt_") end)
 
   defp _get_export_map_data(map) do
     %{

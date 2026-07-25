@@ -1,5 +1,6 @@
 export * from './useMapInit';
 export * from './useMapUpdated';
+export * from './useMapUpdateOptions';
 export * from './useMapCheckPermissions';
 export * from './useMapGetOption';
 export * from './useRoutes';

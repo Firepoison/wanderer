@@ -10,8 +10,10 @@ export interface ContextMenuSystemProps {
   contextMenuRef: RefObject<ContextMenu>;
   systemId: string | undefined;
   systems: SolarSystemRawType[];
+  rootSystemId?: string;
   onDeleteSystem(): void;
   onLockToggle(): void;
+  onSetRootToggle(): void;
   onOpenSettings(): void;
   onHubToggle(): void;
   onUserHubToggle(): void;

@@ -1,4 +1,5 @@
 export * from './useMapHandlers';
+export * from './useAutoLayout';
 export * from './useUpdateNodes';
 export * from './useNodesEdgesState';
 export * from './useBackgroundVars';

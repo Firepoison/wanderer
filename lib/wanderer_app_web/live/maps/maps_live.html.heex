@@ -286,6 +286,31 @@
                 </li>
 
                 <li
+                  class={[
+                    "p-unselectable-text",
+                    classes("p-tabview-selected p-highlight": @active_settings_tab == "layout")
+                  ]}
+                  role="presentation"
+                  data-pc-name=""
+                  data-pc-section="header"
+                >
+                  <a
+                    role="tab"
+                    class="p-tabview-nav-link flex p-[10px]"
+                    tabindex="-1"
+                    aria-selected="false"
+                    aria-disabled="false"
+                    data-pc-section="headeraction"
+                    phx-click="change_settings_tab"
+                    phx-value-tab="layout"
+                  >
+                    <span class="p-tabview-title" data-pc-section="headertitle">
+                      <.icon name="hero-share-solid" class="w-4 h-4" />&nbsp;Layout
+                    </span>
+                  </a>
+                </li>
+
+                <li
                   :if={@map_subscriptions_enabled?}
                   class={[
                     "p-unselectable-text",
@@ -488,6 +513,42 @@
                     placeholder="Select role to allow map data paste"
                     options={@allowed_paste_for_options}
                   />
+                </.form>
+              </div>
+
+              <div :if={@active_settings_tab == "layout"}>
+                <.form
+                  :let={f}
+                  :if={assigns |> Map.get(:options_form, false)}
+                  for={@options_form}
+                  phx-change="update_options"
+                >
+                  <.input
+                    type="checkbox"
+                    field={f[:auto_layout_enabled]}
+                    label="Enable automatic tree layout (locks node movement for non-admins)"
+                  />
+                  <.input
+                    type="select"
+                    field={f[:auto_layout_engine]}
+                    class="select h-8 min-h-[10px] !pt-1 !pb-1 text-sm bg-neutral-900"
+                    label="Auto layout engine"
+                    options={@auto_layout_engine_options}
+                  />
+<%!-- Driven by WandererApp.Map.LayoutEngines: each engine declares the options it accepts,
+                       so a new engine needs no changes here. --%>
+                  <.input
+                    :for={spec <- @auto_layout_option_specs}
+                    type="select"
+                    field={f[spec.field]}
+                    class="select h-8 min-h-[10px] !pt-1 !pb-1 text-sm bg-neutral-900"
+                    label={spec.label}
+                    options={spec.choices}
+                  />
+                  <p class="text-sm text-neutral-400 mt-2 w-0 min-w-full break-words">
+                    Connected, unlocked systems are arranged into a tree; disconnected and locked systems stay in place.
+                    Set a root node from a system's right-click menu on the map to anchor the tree.
+                  </p>
                 </.form>
               </div>
 

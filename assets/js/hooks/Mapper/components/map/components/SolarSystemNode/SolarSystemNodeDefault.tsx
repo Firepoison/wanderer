@@ -160,6 +160,7 @@ export const SolarSystemNodeDefault = memo((props: NodeProps<MapSolarSystemType>
 
               <div className="flex items-center gap-0.5 justify-end">
                 <div className={classes.StatusIcons}>
+                  {nodeVars.isRoot && <i className={clsx(PrimeIcons.SITEMAP, classes.lockIcon)} />}
                   {nodeVars.locked && <i className={clsx(PrimeIcons.LOCK, classes.lockIcon)} />}
                   {nodeVars.hubs.includes(nodeVars.solarSystemId) && (
                     <i className={clsx(PrimeIcons.MAP_MARKER, classes.mapMarker)} />

@@ -124,6 +124,7 @@ export const useMapHandlers = (ref: ForwardedRef<MapHandlers>, onSelectionChange
             case Commands.updateActivity:
             case Commands.updateTracking:
             case Commands.userSettingsUpdated:
+            case Commands.updateOptions:
               // do nothing
               break;
 
