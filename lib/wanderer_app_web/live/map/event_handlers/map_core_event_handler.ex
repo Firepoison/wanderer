@@ -147,6 +147,14 @@ defmodule WandererAppWeb.MapCoreEventHandler do
         map_diff
       )
 
+  def handle_server_event(%{event: :options_updated, payload: options}, socket),
+    do:
+      socket
+      |> MapEventHandler.push_map_event(
+        "update_options",
+        options
+      )
+
   def handle_server_event(
         %{event: "presence_diff"},
         socket
@@ -323,6 +331,61 @@ defmodule WandererAppWeb.MapCoreEventHandler do
 
       _ ->
         {:reply, %{default_settings: nil}, socket}
+    end
+  end
+
+  def handle_ui_event(
+        "update_layout_settings",
+        payload,
+        %{
+          assigns: %{
+            map_id: map_id,
+            user_permissions: user_permissions
+          }
+        } = socket
+      ) do
+    # Auto-layout / root-node settings are a map-wide policy: only map admins may change them.
+    if user_permissions.admin_map do
+      # Only the universal settings are reachable from the canvas. Engine-specific options are
+      # edited in the map settings form, which validates them against the engine catalog; an
+      # unvalidated bag must not be settable from here.
+      layout_options =
+        payload
+        |> Map.take([
+          "auto_layout_enabled",
+          "auto_layout_engine",
+          "root_system_id"
+        ])
+        |> then(fn options ->
+          case Map.fetch(options, "auto_layout_engine") do
+            {:ok, engine_id} ->
+              Map.put(options, "auto_layout_engine", WandererApp.Map.LayoutEngines.engine(engine_id).id)
+
+            :error ->
+              options
+          end
+        end)
+
+      with {:ok, map} <- WandererApp.MapRepo.get(map_id),
+           {:ok, current_options} <- WandererApp.MapRepo.options_to_form_data(map),
+           new_options <- Map.merge(current_options, layout_options),
+           {:ok, _updated_map} <- WandererApp.MapRepo.update_options(map, new_options) do
+        # Notify the map server (updates in-memory options + map_opts) and, via the
+        # server's :options_updated fan-out, every open map canvas.
+        Phoenix.PubSub.broadcast(
+          WandererApp.PubSub,
+          "maps:#{map_id}",
+          {:options_updated, map_id, new_options}
+        )
+
+        {:reply, %{options: new_options}, socket}
+      else
+        error ->
+          Logger.error("Failed to update layout settings: #{inspect(error)}")
+          {:reply, %{success: false, error: "Failed to update layout settings"}, socket}
+      end
+    else
+      {:reply, %{success: false, error: "unauthorized"}, socket}
     end
   end
 

@@ -444,6 +444,10 @@ defmodule WandererApp.Map.Server.Impl do
       map: map |> WandererApp.Map.update_options!(options),
       map_opts: map_options(options)
     })
+
+    # Push the refreshed options to every connected map canvas so client-side
+    # behavior (e.g. auto-layout) reacts without a page reload.
+    broadcast!(map_id, :options_updated, options)
   end
 
   def broadcast!(map_id, event, payload \\ nil) do

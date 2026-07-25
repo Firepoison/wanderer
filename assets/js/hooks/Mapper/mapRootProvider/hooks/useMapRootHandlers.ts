@@ -22,6 +22,7 @@ import {
   CommandSignaturesUpdated,
   CommandTrackingCharactersData,
   CommandUpdateConnection,
+  CommandUpdateOptions,
   CommandUpdateSystems,
   CommandUserSettingsUpdated,
   MapHandlers,
@@ -37,6 +38,7 @@ import {
   useCommandsSystems,
   useMapInit,
   useMapUpdated,
+  useMapUpdateOptions,
   useRoutes,
   useRoutesListBy,
   useUserRoutes,
@@ -60,6 +62,7 @@ export const useMapRootHandlers = (ref: ForwardedRef<MapHandlers>) => {
   const { charactersUpdated, characterAdded, characterRemoved, characterUpdated, presentCharacters } =
     useCommandsCharacters();
   const mapUpdated = useMapUpdated();
+  const updateOptions = useMapUpdateOptions();
   const mapRoutes = useRoutes();
   const mapUserRoutes = useUserRoutes();
   const mapRoutesListBy = useRoutesListBy();
@@ -110,6 +113,9 @@ export const useMapRootHandlers = (ref: ForwardedRef<MapHandlers>) => {
             break;
           case Commands.mapUpdated: // USED
             mapUpdated(data as CommandMapUpdated);
+            break;
+          case Commands.updateOptions: // USED
+            updateOptions(data as CommandUpdateOptions);
             break;
           case Commands.routes:
             mapRoutes(data as CommandRoutes);
