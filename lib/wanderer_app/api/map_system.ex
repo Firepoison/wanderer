@@ -203,6 +203,7 @@ defmodule WandererApp.Api.MapSystem do
 
       # Security: Filter to only systems from actor's map
       prepare WandererApp.Api.Preparations.FilterSystemsByActorMap
+      prepare WandererApp.Api.Preparations.FilterSystemsByCurrentMapMembership
 
       pagination offset?: true,
                  default_limit: 100,

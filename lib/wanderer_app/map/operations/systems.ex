@@ -10,10 +10,16 @@ defmodule WandererApp.Map.Operations.Systems do
 
   @spec list_systems(String.t()) :: [map()]
   def list_systems(map_id) do
-    with {:ok, systems} <- MapSystemRepo.get_visible_by_map(map_id) do
-      systems
-    else
-      _ -> []
+    case WandererApp.Map.get_map(map_id) do
+      {:ok, %{systems: systems}} when is_map(systems) ->
+        systems |> Map.values()
+
+      _ ->
+        with {:ok, systems} <- MapSystemRepo.get_visible_by_map(map_id) do
+          systems
+        else
+          _ -> []
+        end
     end
   end
 

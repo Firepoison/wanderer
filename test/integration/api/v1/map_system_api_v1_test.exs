@@ -48,6 +48,46 @@ defmodule WandererAppWeb.Api.V1.MapSystemApiV1Test do
       assert system2.id in ids
     end
 
+    test "GET /api/v1/map_systems returns only current map members when DB has extra visible systems",
+         %{
+           conn: conn,
+           map: map
+         } do
+      member_system =
+        insert(:map_system, %{
+          map_id: map.id,
+          solar_system_id: 30_000_142,
+          name: "Jita",
+          visible: true
+        })
+
+      _stale_visible_system =
+        insert(:map_system, %{
+          map_id: map.id,
+          solar_system_id: 30_000_144,
+          name: "Perimeter",
+          visible: true
+        })
+
+      WandererApp.Map.new(%{
+        id: map.id,
+        name: map.name,
+        scope: map.scope,
+        owner_id: map.owner_id,
+        acls: [],
+        hubs: []
+      })
+
+      :ok = WandererApp.Map.add_system(map.id, member_system)
+
+      on_exit(fn -> Cachex.del(:map_cache, map.id) end)
+
+      conn = get(conn, "/api/v1/map_systems")
+
+      assert %{"data" => data} = json_response(conn, 200)
+      assert Enum.map(data, & &1["attributes"]["solar_system_id"]) == [30_000_142]
+    end
+
     test "GET /api/v1/map_systems filters to only the authenticated map's systems", %{
       conn: conn,
       map: map

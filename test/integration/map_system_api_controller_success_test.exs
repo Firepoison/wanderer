@@ -112,6 +112,46 @@ defmodule WandererAppWeb.MapSystemAPIControllerSuccessTest do
       assert amarr["status"] == 0
     end
 
+    test "READ: returns only current map members when DB has extra visible systems", %{
+      conn: conn,
+      map: map
+    } do
+      member_system =
+        insert(:map_system, %{
+          map_id: map.id,
+          solar_system_id: 30_000_142,
+          name: "Jita",
+          visible: true
+        })
+
+      _stale_visible_system =
+        insert(:map_system, %{
+          map_id: map.id,
+          solar_system_id: 30_000_144,
+          name: "Perimeter",
+          visible: true
+        })
+
+      WandererApp.Map.new(%{
+        id: map.id,
+        name: map.name,
+        scope: map.scope,
+        owner_id: map.owner_id,
+        acls: [],
+        hubs: []
+      })
+
+      :ok = WandererApp.Map.add_system(map.id, member_system)
+
+      on_exit(fn -> Cachex.del(:map_cache, map.id) end)
+
+      conn = get(conn, ~p"/api/maps/#{map.slug}/systems")
+
+      assert %{"data" => %{"systems" => systems}} = json_response(conn, 200)
+
+      assert Enum.map(systems, & &1["solar_system_id"]) == [30_000_142]
+    end
+
     test "CREATE: successfully creates a single system", %{conn: conn, map: map} do
       # Start the map server
       ensure_map_started(map.id)
