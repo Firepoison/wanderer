@@ -1,4 +1,4 @@
-import { SolarSystemNodeDefault, SolarSystemNodeTheme } from '../components/SolarSystemNode';
+import { SolarSystemNodeDefault, SolarSystemNodeTheme, SolarSystemNodeFocus } from '../components/SolarSystemNode';
 import type { NodeProps } from 'reactflow';
 import type { ComponentType } from 'react';
 import { MapSolarSystemType } from '../map.types';
@@ -23,6 +23,11 @@ const THEME_BEHAVIORS: {
   pathfinder: {
     isPanAndDrag: true,
     nodeComponent: SolarSystemNodeTheme,
+    connectionMode: ConnectionMode.Loose,
+  },
+  focus: {
+    isPanAndDrag: false,
+    nodeComponent: SolarSystemNodeFocus,
     connectionMode: ConnectionMode.Loose,
   },
 };
