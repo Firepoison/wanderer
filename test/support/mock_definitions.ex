@@ -58,6 +58,7 @@ if Mix.env() == :test do
   defmodule WandererApp.Map.Server.MockBehaviour do
     @callback add_system(binary(), map(), binary(), binary()) :: any()
     @callback update_system_position(binary(), map()) :: any()
+    @callback update_system_positions(binary(), list()) :: any()
     @callback update_system_status(binary(), map()) :: any()
     @callback update_system_description(binary(), map()) :: any()
     @callback update_system_tag(binary(), map()) :: any()

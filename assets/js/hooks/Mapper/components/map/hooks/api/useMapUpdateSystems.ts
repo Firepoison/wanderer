@@ -17,9 +17,12 @@ export const useMapUpdateSystems = () => {
 
   return useCallback(
     (systems: CommandUpdateSystems) => {
+      // Lookup map rather than a `find` per node: a batched update (e.g. an auto-layout save)
+      // carries most of the map's systems, which would make this O(nodes * systems).
+      const byId = new Map(systems.map(s => [s.id, s]));
       const nodes = rf.getNodes();
       const prepared: Node[] = nodes.map(node => {
-        const system = systems.find(s => s.id === node.id);
+        const system = byId.get(node.id);
 
         if (system) {
           return {
@@ -34,7 +37,7 @@ export const useMapUpdateSystems = () => {
       rf.setNodes(prepared);
 
       const out = ref.current.systems.map(current => {
-        const newSystem = systems.find(x => current.id === x.id);
+        const newSystem = byId.get(current.id);
         if (!newSystem) {
           return current;
         }

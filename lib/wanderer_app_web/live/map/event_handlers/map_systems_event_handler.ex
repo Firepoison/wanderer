@@ -26,6 +26,14 @@ defmodule WandererAppWeb.MapSystemsEventHandler do
         MapEventHandler.map_ui_system(system, false)
       ])
 
+  def handle_server_event(%{event: :update_systems, payload: systems}, socket),
+    do:
+      socket
+      |> MapEventHandler.push_map_event(
+        "update_systems",
+        Enum.map(systems, &MapEventHandler.map_ui_system(&1, false))
+      )
+
   def handle_server_event(%{event: :systems_removed, payload: solar_system_ids}, socket),
     do:
       socket
@@ -222,8 +230,12 @@ defmodule WandererAppWeb.MapSystemsEventHandler do
         } = socket
       )
       when not is_nil(main_character_id) do
-    map_id
-    |> update_system_positions(positions)
+    updates =
+      positions
+      |> Enum.map(&parse_system_position/1)
+      |> Enum.reject(&is_nil/1)
+
+    WandererApp.Map.Server.update_system_positions(map_id, updates)
 
     {:noreply, socket}
   end
@@ -373,25 +385,23 @@ defmodule WandererAppWeb.MapSystemsEventHandler do
   defp can_update_system?(:locked, %{lock_system: false} = _user_permissions), do: false
   defp can_update_system?(_key, _user_permissions), do: true
 
-  defp update_system_positions(_map_id, []), do: :ok
-
-  defp update_system_positions(map_id, [position | rest]) do
-    update_system_position(map_id, position)
-    update_system_positions(map_id, rest)
+  defp update_system_position(map_id, position) do
+    case parse_system_position(position) do
+      nil -> :ok
+      update -> WandererApp.Map.Server.update_system_position(map_id, update)
+    end
   end
 
-  defp update_system_position(map_id, %{
+  defp parse_system_position(%{
          "position" => %{"x" => x, "y" => y},
          "solar_system_id" => solar_system_id
        })
        when not is_nil(x) and not is_nil(y) and not is_nil(solar_system_id),
-       do:
-         map_id
-         |> WandererApp.Map.Server.update_system_position(%{
-           solar_system_id: solar_system_id |> String.to_integer(),
-           position_x: x,
-           position_y: y
-         })
+       do: %{
+         solar_system_id: solar_system_id |> String.to_integer(),
+         position_x: x,
+         position_y: y
+       }
 
-  defp update_system_position(_map_id, _position), do: :ok
+  defp parse_system_position(_position), do: nil
 end
