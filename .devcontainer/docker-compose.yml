@@ -25,6 +25,13 @@ services:
       - 4444:4444
     volumes:
       - ..:/app:delegated
+      # Dependency and build trees live on Linux volumes layered over the bind mount. On Docker
+      # Desktop for Windows the bind mount is a 9p share where every file stat is slow, and
+      # Phoenix's code reloader stats all of deps/ and _build/ on each request (~10s per page).
+      # Mounting them in place keeps paths like assets/package.json's "file:../deps/phoenix" working.
+      - wanderer-deps:/app/deps
+      - wanderer-build:/app/_build
+      - wanderer-node-modules:/app/assets/node_modules
       - ~/.gitconfig:/root/.gitconfig
       - ~/.gitignore:/root/.gitignore
       - ~/.ssh:/root/.ssh
@@ -33,4 +40,7 @@ services:
 
 volumes:
   elixir-artifacts: {}
+  wanderer-deps: {}
+  wanderer-build: {}
+  wanderer-node-modules: {}
   db-new: {}

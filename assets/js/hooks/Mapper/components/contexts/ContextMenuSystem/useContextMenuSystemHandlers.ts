@@ -12,6 +12,7 @@ interface UseContextMenuSystemHandlersProps {
   userHubs: string[];
   systems: SolarSystemRawType[];
   outCommand: OutCommandHandler;
+  rootSystemId?: string;
 }
 
 export const useContextMenuSystemHandlers = ({
@@ -19,6 +20,7 @@ export const useContextMenuSystemHandlers = ({
   hubs,
   userHubs,
   outCommand,
+  rootSystemId,
 }: UseContextMenuSystemHandlersProps) => {
   const contextMenuRef = useRef<ContextMenu | null>(null);
 
@@ -26,8 +28,8 @@ export const useContextMenuSystemHandlers = ({
 
   const { deleteSystems } = useDeleteSystems();
 
-  const ref = useRef({ hubs, userHubs, system, systems, outCommand, deleteSystems });
-  ref.current = { hubs, userHubs, system, systems, outCommand, deleteSystems };
+  const ref = useRef({ hubs, userHubs, rootSystemId, system, systems, outCommand, deleteSystems });
+  ref.current = { hubs, userHubs, rootSystemId, system, systems, outCommand, deleteSystems };
 
   const open = useCallback((ev: any, systemId: string) => {
     setSystem(systemId);
@@ -59,6 +61,21 @@ export const useContextMenuSystemHandlers = ({
       data: {
         system_id: system,
         value: !sysInfo.locked,
+      },
+    });
+    setSystem(undefined);
+  }, []);
+
+  const onSetRootToggle = useCallback(() => {
+    const { system, rootSystemId, outCommand } = ref.current;
+    if (!system) {
+      return;
+    }
+
+    outCommand({
+      type: OutCommand.updateLayoutSettings,
+      data: {
+        root_system_id: rootSystemId === system ? '' : system,
       },
     });
     setSystem(undefined);
@@ -213,6 +230,7 @@ export const useContextMenuSystemHandlers = ({
     contextMenuRef,
     onDeleteSystem,
     onLockToggle,
+    onSetRootToggle,
     onHubToggle,
     onUserHubToggle,
     // onTogglePingRally,

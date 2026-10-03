@@ -95,6 +95,14 @@ const INITIAL_DATA: MapRootData = {
     show_linked_signature_id_temp_name: 'false',
     show_temp_system_name: 'false',
     store_custom_labels: 'false',
+    // Mirrors @default_map_options in lib/wanderer_app/repositories/map_repo.ex — used until
+    // the server's `init` payload arrives.
+    auto_layout_enabled: 'false',
+    auto_layout_engine: 'dagre',
+    // Empty rather than a copy of the server's per-engine defaults: each engine already falls
+    // back to its own defaults for anything missing, so there is nothing to keep in sync here.
+    auto_layout_options: '',
+    root_system_id: '',
   },
   isSubscriptionActive: false,
   linkSignatureToSystem: null,

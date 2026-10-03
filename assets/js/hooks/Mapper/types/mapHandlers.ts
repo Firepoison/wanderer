@@ -22,6 +22,7 @@ export enum Commands {
   presentCharacters = 'present_characters',
   updateConnection = 'update_connection',
   mapUpdated = 'map_updated',
+  updateOptions = 'update_options',
   killsUpdated = 'kills_updated',
   detailedKillsUpdated = 'detailed_kills_updated',
   routes = 'routes',
@@ -60,6 +61,7 @@ export type Command =
   | Commands.presentCharacters
   | Commands.updateConnection
   | Commands.mapUpdated
+  | Commands.updateOptions
   | Commands.killsUpdated
   | Commands.detailedKillsUpdated
   | Commands.routes
@@ -124,6 +126,7 @@ export type CommandPresentCharacters = string[];
 export type CommandUpdateConnection = SolarSystemConnection;
 export type CommandSignaturesUpdated = string;
 export type CommandMapUpdated = Partial<CommandInit>;
+export type CommandUpdateOptions = MapOptions;
 export type CommandRoutes = RoutesList;
 export type CommandUserRoutes = RoutesList;
 export type CommandRoutesListBy = RoutesList;
@@ -203,6 +206,7 @@ export interface CommandData {
   [Commands.presentCharacters]: CommandPresentCharacters;
   [Commands.updateConnection]: CommandUpdateConnection;
   [Commands.mapUpdated]: CommandMapUpdated;
+  [Commands.updateOptions]: CommandUpdateOptions;
   [Commands.routes]: CommandRoutes;
   [Commands.userRoutes]: CommandUserRoutes;
   [Commands.routesListBy]: CommandRoutesListBy;
@@ -290,6 +294,8 @@ export enum OutCommand {
   addPing = 'add_ping',
   cancelPing = 'cancel_ping',
   startTracking = 'startTracking',
+
+  updateLayoutSettings = 'update_layout_settings',
 
   // Only UI commands
   openSettings = 'open_settings',

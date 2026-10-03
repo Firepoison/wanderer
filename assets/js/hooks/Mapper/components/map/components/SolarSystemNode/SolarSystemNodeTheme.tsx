@@ -137,6 +137,7 @@ export const SolarSystemNodeTheme = memo((props: NodeProps<MapSolarSystemType>) 
 
               <div className="flex items-center gap-1 justify-end">
                 <div className={clsx('flex items-center gap-1')}>
+                  {nodeVars.isRoot && <i className={clsx(PrimeIcons.SITEMAP, classes.lockIcon)} />}
                   {nodeVars.locked && <i className={clsx(PrimeIcons.LOCK, classes.lockIcon)} />}
                   {nodeVars.hubs.includes(nodeVars.solarSystemId) && (
                     <i className={clsx(PrimeIcons.MAP_MARKER, classes.mapMarker)} />

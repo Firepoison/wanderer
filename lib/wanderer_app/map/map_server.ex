@@ -44,6 +44,8 @@ defmodule WandererApp.Map.Server do
 
   defdelegate update_system_position(map_id, update), to: Impl
 
+  defdelegate update_system_positions(map_id, updates), to: Impl
+
   defdelegate update_system_linked_sig_eve_id(map_id, update), to: Impl
 
   defdelegate update_system_name(map_id, update), to: Impl
