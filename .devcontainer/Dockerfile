@@ -27,4 +27,16 @@ RUN apt --fix-broken install
 
 RUN mix local.hex --force
 
+# Auto-source the repo's .env (which uses `export` syntax) in login and
+# interactive shells, so `mix phx.server` sees EVE_CLIENT_ID, WANDERER_* flags, etc.
+# `tr -d '\r'` strips Windows CRLF endings so values don't get a trailing \r.
+RUN printf '%s\n' \
+      '# Load Wanderer dev environment variables if the repo .env is present' \
+      'if [ -f /app/.env ]; then' \
+      '  eval "$(tr -d '"'"'\r'"'"' < /app/.env)"' \
+      'fi' \
+      > /etc/profile.d/wanderer-env.sh \
+ && printf '\n[ -f /etc/profile.d/wanderer-env.sh ] && . /etc/profile.d/wanderer-env.sh\n' \
+      >> /etc/bash.bashrc
+
 WORKDIR /app
