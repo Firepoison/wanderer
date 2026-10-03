@@ -120,7 +120,7 @@ const MapComp = ({
 
   useMapHandlers(refn, onSelectionChange);
   useUpdateNodes(nodes);
-  const { getCluster } = useAutoLayout({ nodes, edges, setNodes, onCommand });
+  const { getCluster, beginDrag, endDrag } = useAutoLayout({ nodes, edges, setNodes, onCommand });
 
   // Authoritative node state for the drag handlers. React Flow's own store (`getNodes()`) lags
   // the controlled `nodes` prop by a committed render, so reading positions from it mid-drag
@@ -163,6 +163,7 @@ const MapComp = ({
 
   const handleNodeDragStart: NodeDragHandler = useCallback(
     (_, node) => {
+      beginDrag();
       const members = getCluster(node.id);
       if (members && members.length > 1) {
         // Single pass over the nodes with a membership set — a `find` per member would be
@@ -179,7 +180,7 @@ const MapComp = ({
         clusterDragRef.current = null;
       }
     },
-    [getCluster],
+    [getCluster, beginDrag],
   );
 
   const handleNodeDrag: NodeDragHandler = useCallback(
@@ -247,8 +248,9 @@ const MapComp = ({
           data: { solar_system_id: node.id, position: node.position },
         });
       }
+      endDrag();
     },
-    [onCommand],
+    [onCommand, endDrag],
   );
 
   const handleSelectionDragStop: SelectionDragHandler = useCallback(
@@ -258,9 +260,10 @@ const MapComp = ({
           type: OutCommand.updateSystemPositions,
           data: nodes.map(x => ({ solar_system_id: x.id, position: x.position })),
         });
+        endDrag();
       }, 500);
     },
-    [onCommand],
+    [onCommand, endDrag],
   );
 
   const resetContexts = useCallback(() => ctxManager.reset(), []);
@@ -343,6 +346,7 @@ const MapComp = ({
           onNodeDragStart={handleNodeDragStart}
           onNodeDrag={handleNodeDrag}
           onNodeDragStop={handleDragStop}
+          onSelectionDragStart={beginDrag}
           onSelectionDragStop={handleSelectionDragStop}
           onConnectStart={() => update({ isConnecting: true })}
           onConnectEnd={() => update({ isConnecting: false })}
