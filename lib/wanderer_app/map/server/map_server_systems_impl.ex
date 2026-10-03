@@ -283,6 +283,70 @@ defmodule WandererApp.Map.Server.SystemsImpl do
           end
         )
 
+  @doc """
+  Batch form of `update_system_position/2`, for moves that touch many systems at once (cluster
+  and selection drags, auto-layout). Reads the map's systems once, skips systems whose stored
+  position already matches, and sends the changed systems to map clients as one `:update_systems`
+  broadcast rather than one `:update_system` each, so a re-layout of a large chain reaches every
+  client as a single event. External `system_metadata_changed` events stay per system, since
+  that is the webhook/WebSocket contract.
+  """
+  def update_system_positions(_map_id, []), do: :ok
+
+  def update_system_positions(map_id, updates) do
+    case WandererApp.MapSystemRepo.get_all_by_map(map_id) do
+      {:ok, systems} ->
+        systems_by_solar_id = Map.new(systems, &{&1.solar_system_id, &1})
+
+        updated_systems =
+          updates
+          # A system listed twice keeps its last position, as sequential updates would.
+          |> Map.new(&{&1.solar_system_id, &1})
+          |> Map.values()
+          |> Enum.flat_map(&do_update_system_position(map_id, systems_by_solar_id, &1))
+
+        if updated_systems != [] do
+          Impl.broadcast!(map_id, :update_systems, updated_systems)
+        end
+
+        :ok
+
+      error ->
+        Logger.error("Failed to update system positions: #{inspect(error, pretty: true)}")
+        :ok
+    end
+  end
+
+  defp do_update_system_position(map_id, systems_by_solar_id, update) do
+    case Map.get(systems_by_solar_id, update.solar_system_id) do
+      nil ->
+        []
+
+      %{position_x: x, position_y: y} when x == update.position_x and y == update.position_y ->
+        []
+
+      system ->
+        position = %{position_x: update.position_x, position_y: update.position_y}
+
+        with :ok <- WandererApp.Map.update_system_by_solar_system_id(map_id, update),
+             {:ok, updated_system} <- WandererApp.MapSystemRepo.update_position(system, position) do
+          @ddrt.update(
+            updated_system.solar_system_id,
+            WandererApp.Map.PositionCalculator.get_system_bounding_rect(updated_system),
+            "rtree_#{map_id}"
+          )
+
+          touch_system_last_activity(map_id, updated_system)
+          broadcast_system_metadata_changed(map_id, updated_system)
+          [updated_system]
+        else
+          error ->
+            Logger.error("Failed to update system position: #{inspect(error, pretty: true)}")
+            []
+        end
+    end
+  end
+
   def add_hub(
         map_id,
         hub_info
@@ -1102,14 +1166,22 @@ defmodule WandererApp.Map.Server.SystemsImpl do
          map_id,
          updated_system
        ) do
-    WandererApp.Cache.put(
-      "map_#{map_id}:system_#{updated_system.id}:last_activity",
-      DateTime.utc_now(),
-      ttl: @system_inactive_timeout
-    )
+    touch_system_last_activity(map_id, updated_system)
 
     Impl.broadcast!(map_id, :update_system, updated_system)
 
+    broadcast_system_metadata_changed(map_id, updated_system)
+  end
+
+  defp touch_system_last_activity(map_id, updated_system),
+    do:
+      WandererApp.Cache.put(
+        "map_#{map_id}:system_#{updated_system.id}:last_activity",
+        DateTime.utc_now(),
+        ttl: @system_inactive_timeout
+      )
+
+  defp broadcast_system_metadata_changed(map_id, updated_system) do
     # ADDITIVE: Also broadcast to external event system (webhooks/WebSocket)
     # This may fail if the relay is not available (e.g., in tests), which is fine
     WandererApp.ExternalEvents.broadcast(map_id, :system_metadata_changed, %{
