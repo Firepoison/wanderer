@@ -591,6 +591,11 @@ defmodule WandererAppWeb.MapsLive do
     # the rest, and re-assign the merged result (not the raw params) — assigning the params
     # would leave the other tab's inputs with no value, rendering them blank/first-option and
     # silently persisting those wrong values on its next change.
+    #
+    # Merge over a fresh read, not `socket.assigns.map`: that copy dates from when the settings
+    # page opened, so it would write back stale values for keys changed elsewhere since — most
+    # notably "root_system_id", which only the map canvas sets.
+    {:ok, map} = WandererApp.MapRepo.get(map.id)
     {:ok, current_options} = WandererApp.MapRepo.options_to_form_data(map)
     merged = Map.merge(current_options, changed)
 

@@ -1,4 +1,4 @@
-import { Dispatch, SetStateAction, useCallback, useEffect, useMemo, useRef } from 'react';
+import { Dispatch, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import debounce from 'lodash.debounce';
 import { Edge, Node, XYPosition } from 'reactflow';
 
@@ -15,7 +15,7 @@ import {
   LayoutOptions,
 } from '@/hooks/Mapper/components/map/layout';
 
-const ADMIN_PERMISSIONS = [UserPermission.ADMIN_MAP];
+const PERSIST_PERMISSIONS = [UserPermission.UPDATE_SYSTEM];
 const DEFAULT_NODE_W = 130;
 const DEFAULT_NODE_H = 34;
 
@@ -82,7 +82,7 @@ class Fingerprint {
   }
 }
 
-type PersistFlush = { (): void; cancel(): void };
+type PersistFlush = { (): void; cancel(): void; flush(): void };
 
 interface UseAutoLayoutProps {
   nodes: Node<SolarSystemRawType>[];
@@ -103,6 +103,14 @@ export interface UseAutoLayoutResult {
    * undefined. The drag handlers use this to move a whole tree together.
    */
   getCluster: (nodeId: string) => string[] | undefined;
+  /**
+   * Call when the user starts dragging nodes. Sends any queued auto-layout positions right away
+   * (so they reach the server *before* the drop's positions rather than overwriting them), and
+   * suspends layout until `endDrag` so a mid-drag recompute can't fight the drag.
+   */
+  beginDrag: () => void;
+  /** Call after the drop's positions have been sent. Re-runs any layout deferred by the drag. */
+  endDrag: () => void;
 }
 
 /**
@@ -116,8 +124,12 @@ export interface UseAutoLayoutResult {
  * the tree shape is preserved and users reposition whole trees rather than single nodes. This
  * applies to everyone; server-side permission (update_system) still governs who can persist.
  *
- * Only admins persist the *auto-arranged* positions (they hold update_system). Manual cluster
- * drags are persisted by whoever performs them.
+ * Every client that may update systems persists the *auto-arranged* positions it computes, so
+ * the server never keeps pre-layout coordinates just because no admin had the map open (a later
+ * update_system echo would then carry those stale coordinates and pull the node out of the
+ * tree). Concurrent clients compute from the same server state, so their writes agree up to the
+ * determinism caveat below; last write wins. Manual cluster drags are persisted by whoever
+ * performs them.
  *
  * TODO(layout-determinism): the result is not yet a pure function of structure — it depends on
  * per-client measured node dimensions and on each client's current positions (via the centroid
@@ -127,7 +139,7 @@ export interface UseAutoLayoutResult {
  * dimensions are deliberately kept out of the signature.
  */
 export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayoutProps): UseAutoLayoutResult => {
-  const isAdmin = useMapCheckPermissions(ADMIN_PERMISSIONS);
+  const canPersist = useMapCheckPermissions(PERSIST_PERMISSIONS);
 
   const enabled = useMapGetOption('auto_layout_enabled') === 'true';
   const engineRaw = useMapGetOption('auto_layout_engine');
@@ -153,6 +165,11 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
   const onCommandRef = useRef(onCommand);
   onCommandRef.current = onCommand;
 
+  // While the user drags, layout is deferred; bumping `dragEpoch` on drop re-runs the effect so
+  // a structural change that arrived mid-drag is laid out from the dropped positions.
+  const draggingRef = useRef(false);
+  const [dragEpoch, setDragEpoch] = useState(0);
+
   // Debounced persistence of the auto-arranged layout. Updates accumulate in `pendingRef`
   // (keyed by system id) rather than being passed as arguments, so a later run that moves
   // nothing cannot replace — and thereby discard — an earlier run's batch.
@@ -175,12 +192,33 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
 
   const getCluster = useCallback((nodeId: string) => clusterByNodeRef.current.get(nodeId), []);
 
+  const beginDrag = useCallback(() => {
+    draggingRef.current = true;
+    flushRef.current?.flush();
+    // Discard a layout still awaiting the engine: applying it mid-drag would reshape the tree
+    // under the cursor. Clearing the in-flight marker lets the same structure run again later.
+    runIdRef.current++;
+    inFlightSigRef.current = null;
+  }, []);
+
+  const endDrag = useCallback(() => {
+    if (!draggingRef.current) {
+      return;
+    }
+    draggingRef.current = false;
+    setDragEpoch(e => e + 1);
+  }, []);
+
   useEffect(() => {
     if (!enabled) {
       clusterByNodeRef.current = new Map();
       lastSigRef.current = '';
       inFlightSigRef.current = null;
       runIdRef.current++;
+      return;
+    }
+
+    if (draggingRef.current) {
       return;
     }
 
@@ -300,7 +338,7 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
         }),
       );
 
-      if (isAdmin) {
+      if (canPersist) {
         moved.forEach((position, id) => pendingRef.current.set(id, position));
         flushRef.current?.();
       }
@@ -322,7 +360,7 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
           inFlightSigRef.current = null;
         }
       });
-  }, [nodes, edges, enabled, engine, engineId, options, optionsKey, rootId, isAdmin, setNodes]);
+  }, [nodes, edges, enabled, engine, engineId, options, optionsKey, rootId, canPersist, setNodes, dragEpoch]);
 
-  return { getCluster };
+  return { getCluster, beginDrag, endDrag };
 };
