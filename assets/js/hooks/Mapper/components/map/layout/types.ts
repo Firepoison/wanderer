@@ -47,8 +47,8 @@ export interface LayoutResult {
  * `compute` may be synchronous (dagre) or async (e.g. elkjs runs in a worker); callers await.
  */
 export interface LayoutEngine {
+  /** Matches the engine's entry in `WandererApp.Map.LayoutEngines`, which also holds its label. */
   id: string;
-  label: string;
   /** When false, `LayoutInput.rootId` is never populated for this engine. */
   supportsRoot: boolean;
   compute(input: LayoutInput): LayoutResult | Promise<LayoutResult>;

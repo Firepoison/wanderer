@@ -285,16 +285,19 @@ defmodule WandererApp.Map.Server.SystemsImpl do
 
   @doc """
   Batch form of `update_system_position/2`, for moves that touch many systems at once (cluster
-  and selection drags, auto-layout). Reads the map's systems once, skips systems whose stored
-  position already matches, and sends the changed systems to map clients as one `:update_systems`
-  broadcast rather than one `:update_system` each, so a re-layout of a large chain reaches every
-  client as a single event. External `system_metadata_changed` events stay per system, since
-  that is the webhook/WebSocket contract.
+  and selection drags, saving the auto-layout). Reads the map's visible systems once, skips
+  systems whose stored position already matches, and sends the changed systems to map clients as
+  one `:update_systems` broadcast rather than one `:update_system` each, so moving a large chain
+  reaches every client as a single event. External `system_metadata_changed` events stay per
+  system, since that is the webhook/WebSocket contract.
+
+  Systems that are no longer visible are skipped: `update_position` also sets `visible: true`, so
+  a batch that raced the system's deletion would otherwise bring it back.
   """
   def update_system_positions(_map_id, []), do: :ok
 
   def update_system_positions(map_id, updates) do
-    case WandererApp.MapSystemRepo.get_all_by_map(map_id) do
+    case WandererApp.MapSystemRepo.get_visible_by_map(map_id) do
       {:ok, systems} ->
         systems_by_solar_id = Map.new(systems, &{&1.solar_system_id, &1})
 

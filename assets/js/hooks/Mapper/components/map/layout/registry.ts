@@ -6,14 +6,11 @@ import { dagreEngine } from './engines/dagreEngine';
  * layout): implement `LayoutEngine`, import it here, add it to this map, and declare the
  * options it accepts in `WandererApp.Map.LayoutEngines` so the settings form can render them.
  * The orchestrator (`useAutoLayout`) needs no changes — it treats options as opaque.
+ *
+ * A Map rather than an object literal, so a stored engine id like "constructor" can't resolve
+ * to something on Object.prototype.
  */
-export const LAYOUT_ENGINES: Record<string, LayoutEngine> = {
-  [dagreEngine.id]: dagreEngine,
-};
-
-export const DEFAULT_LAYOUT_ENGINE_ID = dagreEngine.id;
+const LAYOUT_ENGINES = new Map<string, LayoutEngine>([[dagreEngine.id, dagreEngine]]);
 
 export const getLayoutEngine = (id: string | undefined | null): LayoutEngine =>
-  (id ? LAYOUT_ENGINES[id] : undefined) ?? LAYOUT_ENGINES[DEFAULT_LAYOUT_ENGINE_ID];
-
-export const listLayoutEngines = (): LayoutEngine[] => Object.values(LAYOUT_ENGINES);
+  (id ? LAYOUT_ENGINES.get(id) : undefined) ?? dagreEngine;

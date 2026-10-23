@@ -103,11 +103,7 @@ defmodule WandererApp.Map.LayoutEngines do
   option's default, missing keys filled in. Accepts the encoded blob or an already-decoded map.
   """
   def normalize(blob, engine_id) do
-    stored =
-      case blob |> decode() |> Map.get(engine_id) do
-        %{} = bag -> bag
-        _ -> %{}
-      end
+    stored = stored_bag(blob, engine_id)
 
     for %{key: key, default: default, choices: choices} <- options_for(engine_id), into: %{} do
       valid = Enum.map(choices, fn {_label, value} -> value end)
@@ -151,8 +147,7 @@ defmodule WandererApp.Map.LayoutEngines do
     bag =
       current_options
       |> Map.get("auto_layout_options")
-      |> decode()
-      |> Map.get(engine_id, %{})
+      |> stored_bag(engine_id)
       |> Map.merge(submitted)
 
     normalized = normalize(%{engine_id => bag}, engine_id)
@@ -162,6 +157,14 @@ defmodule WandererApp.Map.LayoutEngines do
 
   defp selected_engine_id(options) do
     engine(Map.get(options, "auto_layout_engine")).id
+  end
+
+  # The engine's stored bag, or an empty one when it is missing or not a map (e.g. `null`).
+  defp stored_bag(blob, engine_id) do
+    case blob |> decode() |> Map.get(engine_id) do
+      %{} = bag -> bag
+      _ -> %{}
+    end
   end
 
   defp decode(blob) when is_binary(blob) do

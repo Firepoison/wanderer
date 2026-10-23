@@ -29,10 +29,9 @@ const NODE_SEP_PRESETS: Record<string, number> = { compact: 20, normal: 45, spac
 const oneOf = <T extends string>(valid: readonly T[], value: string | undefined, fallback: T): T =>
   valid.includes(value as T) ? (value as T) : fallback;
 
+// Own keys only: a stored value like "constructor" must fall back too, not reach Object.prototype.
 const preset = (presets: Record<string, number>, value: string | undefined): number =>
-  presets[value ?? ''] ?? presets.normal;
-
-const rankdirFor = (direction: DagreDirection): 'TB' | 'BT' | 'LR' | 'RL' => direction;
+  value !== undefined && Object.prototype.hasOwnProperty.call(presets, value) ? presets[value] : presets.normal;
 
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
@@ -88,7 +87,6 @@ const readOptions = (options: LayoutOptions) => ({
 
 export const dagreEngine: LayoutEngine = {
   id: 'dagre',
-  label: 'Tree',
   supportsRoot: true,
 
   compute({ nodes, edges, rootId, options }: LayoutInput): LayoutResult {
@@ -101,7 +99,7 @@ export const dagreEngine: LayoutEngine = {
 
     const g = new dagre.graphlib.Graph();
     g.setGraph({
-      rankdir: rankdirFor(direction),
+      rankdir: direction,
       ranksep: rankSep,
       nodesep: nodeSep,
       ranker,
