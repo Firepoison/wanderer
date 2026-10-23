@@ -5,6 +5,7 @@ import { SolarSystemRawType } from '@/hooks/Mapper/types';
 import { WaypointSetContextHandler } from '@/hooks/Mapper/components/contexts/types.ts';
 import { ctxManager } from '@/hooks/Mapper/utils/contextManager.ts';
 import { useDeleteSystems } from '@/hooks/Mapper/components/contexts/hooks';
+import { emitStructureChange } from '@/hooks/Mapper/events';
 // import { PingType } from '@/hooks/Mapper/types/ping.ts';
 
 interface UseContextMenuSystemHandlersProps {
@@ -56,6 +57,7 @@ export const useContextMenuSystemHandlers = ({
 
     const sysInfo = systems.find(x => x.id === system)!;
 
+    emitStructureChange({ systemIds: [system] });
     outCommand({
       type: OutCommand.updateSystemLocked,
       data: {
@@ -72,6 +74,8 @@ export const useContextMenuSystemHandlers = ({
       return;
     }
 
+    // The root anchors its cluster, so both the new and the previous root's clusters re-anchor.
+    emitStructureChange({ systemIds: rootSystemId ? [system, rootSystemId] : [system] });
     outCommand({
       type: OutCommand.updateLayoutSettings,
       data: {

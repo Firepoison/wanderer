@@ -5,6 +5,7 @@ import { useMapState } from '../../MapProvider.tsx';
 import { OutCommand } from '@/hooks/Mapper/types/mapHandlers.ts';
 import { ConnectionType, MassState, ShipSizeStatus, SolarSystemConnection, TimeStatus } from '@/hooks/Mapper/types';
 import { ctxManager } from '@/hooks/Mapper/utils/contextManager.ts';
+import { emitStructureChange } from '@/hooks/Mapper/events';
 
 export const useContextMenuConnectionHandlers = () => {
   const contextMenuRef = useRef<ContextMenu | null>(null);
@@ -26,6 +27,7 @@ export const useContextMenuConnectionHandlers = () => {
       return;
     }
 
+    emitStructureChange({ systemIds: [edge.source, edge.target] });
     outCommand({ type: OutCommand.manualDeleteConnection, data: { source: edge.source, target: edge.target } });
     setEdge(undefined);
   };

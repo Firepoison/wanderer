@@ -1,6 +1,8 @@
 import { NodeSelectionMouseHandler } from '@/hooks/Mapper/components/contexts/types.ts';
 import { PingData, SolarSystemConnection, SolarSystemRawType } from '@/hooks/Mapper/types';
 import { MapHandlers, OutCommand, OutCommandHandler } from '@/hooks/Mapper/types/mapHandlers.ts';
+import { UserPermission } from '@/hooks/Mapper/types/permissions.ts';
+import { useMapCheckPermissions } from '@/hooks/Mapper/mapRootProvider/hooks/api';
 import { ctxManager } from '@/hooks/Mapper/utils/contextManager.ts';
 import type { PanelPosition } from '@reactflow/core';
 import clsx from 'clsx';
@@ -71,6 +73,10 @@ const edgeTypes = {
 
 export const MAP_ROOT_ID = 'MAP_ROOT_ID';
 
+// Saving the layout rewrites the stored position of every laid-out system, so it is an admin
+// action, like the auto-layout settings themselves.
+const SAVE_LAYOUT_PERMISSIONS = [UserPermission.ADMIN_MAP];
+
 interface MapCompProps {
   refn: ForwardedRef<MapHandlers>;
   onCommand: OutCommandHandler;
@@ -120,7 +126,15 @@ const MapComp = ({
 
   useMapHandlers(refn, onSelectionChange);
   useUpdateNodes(nodes);
-  const { getCluster, beginDrag, endDrag } = useAutoLayout({ nodes, edges, setNodes, onCommand });
+  const {
+    enabled: isAutoLayoutEnabled,
+    getCluster,
+    beginDrag,
+    endDrag,
+    savePositions,
+    saveLayout,
+  } = useAutoLayout({ nodes, edges, setNodes, onCommand });
+  const canSaveLayout = useMapCheckPermissions(SAVE_LAYOUT_PERMISSIONS);
 
   // Authoritative node state for the drag handlers. React Flow's own store (`getNodes()`) lags
   // the controlled `nodes` prop by a committed render, so reading positions from it mid-drag
@@ -128,11 +142,13 @@ const MapComp = ({
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
 
-  // While auto-layout is on, dragging any node in a connected cluster moves the whole tree
-  // together (its relative shape is preserved). Holds the grabbed node + each cluster member's
-  // start position for the duration of a drag.
+  // While auto-layout is on, dragging any node of a connected cluster moves the whole tree
+  // together (its relative shape is preserved). React Flow moves every dragged node by the same
+  // delta, so the drag is tracked by one of them (`refId`); `followers` are the members of the
+  // dragged nodes' clusters that React Flow isn't moving itself. `start` holds the start
+  // positions of the dragged nodes and the followers.
   // Record (not Map) — the exported `Map` component below shadows the global Map constructor.
-  const clusterDragRef = useRef<{ nodeId: string; members: string[]; start: Record<string, XYPosition> } | null>(null);
+  const dragRef = useRef<{ refId: string; followers: Set<string>; start: Record<string, XYPosition> } | null>(null);
 
   const { handleRootContext, ...rootCtxProps } = useContextMenuRootHandlers({ onAddSystem, onCommand });
   const { handleConnectionContext, ...connectionCtxProps } = useContextMenuConnectionHandlers();
@@ -161,56 +177,60 @@ const MapComp = ({
     [onCommand],
   );
 
-  const handleNodeDragStart: NodeDragHandler = useCallback(
-    (_, node) => {
+  const startDrag = useCallback(
+    (dragged: Node[], refId: string) => {
       beginDrag();
-      const members = getCluster(node.id);
-      if (members && members.length > 1) {
-        // Single pass over the nodes with a membership set — a `find` per member would be
-        // O(members * nodes), and for auto-layout maps most nodes are in one cluster.
-        const memberSet = new Set(members);
-        const start: Record<string, XYPosition> = {};
-        nodesRef.current.forEach(n => {
-          if (memberSet.has(n.id)) {
-            start[n.id] = { x: n.position.x, y: n.position.y };
+      const draggedIds = new Set(dragged.map(n => n.id));
+      const followers = new Set<string>();
+      draggedIds.forEach(id =>
+        getCluster(id)?.forEach(member => {
+          if (!draggedIds.has(member)) {
+            followers.add(member);
           }
-        });
-        clusterDragRef.current = { nodeId: node.id, members, start };
-      } else {
-        clusterDragRef.current = null;
-      }
+        }),
+      );
+
+      // Single pass over the nodes with a membership set — a `find` per member would be
+      // O(members * nodes), and for auto-layout maps most nodes are in one cluster.
+      const start: Record<string, XYPosition> = {};
+      nodesRef.current.forEach(n => {
+        if (draggedIds.has(n.id) || followers.has(n.id)) {
+          start[n.id] = { x: n.position.x, y: n.position.y };
+        }
+      });
+      dragRef.current = { refId, followers, start };
     },
     [getCluster, beginDrag],
   );
 
-  const handleNodeDrag: NodeDragHandler = useCallback(
-    (_, node) => {
-      const drag = clusterDragRef.current;
-      if (!drag || drag.nodeId !== node.id) {
+  const followDrag = useCallback(
+    (ref: Node | undefined) => {
+      const drag = dragRef.current;
+      if (!drag || !ref || ref.id !== drag.refId || drag.followers.size === 0) {
         return;
       }
-      const origin = drag.start[node.id];
+      const origin = drag.start[ref.id];
       if (!origin) {
         return;
       }
-      // Move the whole tree rigidly. This goes through the controlled state setter, so it is
-      // queued *after* React Flow's own position change for the grabbed node and composes with
-      // it; re-asserting the grabbed node's position below is then a no-op in the common case,
-      // and a safety net if the ordering ever changes.
-      const dx = node.position.x - origin.x;
-      const dy = node.position.y - origin.y;
+      // Move the followers rigidly with the dragged nodes. This goes through the controlled
+      // state setter, so it is queued *after* React Flow's own position change for the dragged
+      // nodes and composes with it; re-asserting the reference node's position below is then a
+      // no-op in the common case, and a safety net if the ordering ever changes.
+      const dx = ref.position.x - origin.x;
+      const dy = ref.position.y - origin.y;
       setNodes(nds =>
         nds.map(n => {
-          if (n.id === node.id) {
-            if (n.position.x === node.position.x && n.position.y === node.position.y) {
+          if (n.id === ref.id) {
+            if (n.position.x === ref.position.x && n.position.y === ref.position.y) {
               return n;
             }
-            return { ...n, position: { x: node.position.x, y: node.position.y } };
+            return { ...n, position: { x: ref.position.x, y: ref.position.y } };
           }
-          const s = drag.start[n.id];
-          if (!s) {
+          if (!drag.followers.has(n.id)) {
             return n;
           }
+          const s = drag.start[n.id];
           const x = s.x + dx;
           const y = s.y + dy;
           if (n.position.x === x && n.position.y === y) {
@@ -223,48 +243,109 @@ const MapComp = ({
     [setNodes],
   );
 
-  const handleDragStop: NodeDragHandler = useCallback(
-    (_, node) => {
-      const drag = clusterDragRef.current;
-      if (drag && drag.nodeId === node.id) {
-        clusterDragRef.current = null;
-        const origin = drag.start[node.id];
-        const dx = origin ? node.position.x - origin.x : 0;
-        const dy = origin ? node.position.y - origin.y : 0;
-        // Derive the final positions from the recorded start positions and the grabbed node's
-        // total delta — exactly the transform handleNodeDrag applied. Reading them back from
-        // React Flow's store instead would pick up the previous frame's coordinates and snap
-        // the cluster backwards.
-        const data = drag.members
-          .filter(id => drag.start[id])
-          .map(id => ({
-            solar_system_id: id,
-            position: { x: drag.start[id].x + dx, y: drag.start[id].y + dy },
-          }));
-        onCommand({ type: OutCommand.updateSystemPositions, data });
-      } else {
-        onCommand({
-          type: OutCommand.updateSystemPosition,
-          data: { solar_system_id: node.id, position: node.position },
+  const finishDrag = useCallback(
+    (dragged: Node[]) => {
+      const drag = dragRef.current;
+      dragRef.current = null;
+
+      const updates = dragged.map(n => ({ solar_system_id: n.id, position: n.position }));
+      const ref = drag && dragged.find(n => n.id === drag.refId);
+      const origin = ref && drag.start[ref.id];
+      if (drag && ref && origin) {
+        const dx = ref.position.x - origin.x;
+        const dy = ref.position.y - origin.y;
+        // Derive the followers' final positions from their start positions and the drag's total
+        // delta — exactly the transform followDrag applied. Reading them back from React Flow's
+        // store instead would pick up the previous frame's coordinates and snap the cluster
+        // backwards.
+        drag.followers.forEach(id => {
+          const s = drag.start[id];
+          if (s) {
+            updates.push({ solar_system_id: id, position: { x: s.x + dx, y: s.y + dy } });
+          }
         });
       }
+
+      savePositions(updates);
       endDrag();
     },
-    [onCommand, endDrag],
+    [savePositions, endDrag],
   );
 
-  const handleSelectionDragStop: SelectionDragHandler = useCallback(
-    (_, nodes) => {
+  // Undoes a drag React Flow abandoned, so nothing is left moved but unsaved.
+  const abortDrag = useCallback(() => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    if (drag) {
+      setNodes(nds =>
+        nds.map(n => {
+          const s = drag.start[n.id];
+          return s ? { ...n, position: s, dragging: false } : n;
+        }),
+      );
+    }
+    endDrag();
+  }, [setNodes, endDrag]);
+
+  // React Flow ends an aborted drag (a second finger on a touch screen) without calling
+  // onNodeDragStop/onSelectionDragStop, which would leave reconciling suspended. So once every
+  // pointer is released, give React Flow's own stop handler — which runs on that same release —
+  // a moment, and undo the drag if it never came. Tracking all pressed pointers keeps lifting a
+  // second finger mid-drag from ending a drag that is still going.
+  useEffect(() => {
+    const pressed = new Set<number>();
+    const onDown = (e: PointerEvent) => pressed.add(e.pointerId);
+    const onUp = (e: PointerEvent) => {
+      pressed.delete(e.pointerId);
+      const drag = dragRef.current;
+      if (!drag || pressed.size > 0) {
+        return;
+      }
       setTimeout(() => {
-        onCommand({
-          type: OutCommand.updateSystemPositions,
-          data: nodes.map(x => ({ solar_system_id: x.id, position: x.position })),
-        });
-        endDrag();
-      }, 500);
-    },
-    [onCommand, endDrag],
+        if (dragRef.current === drag) {
+          abortDrag();
+        }
+      }, 100);
+    };
+
+    window.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', onUp, true);
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onUp, true);
+    };
+  }, [abortDrag]);
+
+  // `dragged` holds every node React Flow is moving: the grabbed one plus any other selected.
+  const handleNodeDragStart: NodeDragHandler = useCallback(
+    (_, node, dragged) => startDrag(dragged.length > 0 ? dragged : [node], node.id),
+    [startDrag],
   );
+
+  const handleNodeDrag: NodeDragHandler = useCallback((_, node) => followDrag(node), [followDrag]);
+
+  const handleNodeDragStop: NodeDragHandler = useCallback(
+    (_, node, dragged) => finishDrag(dragged.length > 0 ? dragged : [node]),
+    [finishDrag],
+  );
+
+  const handleSelectionDragStart: SelectionDragHandler = useCallback(
+    (_, dragged) => {
+      if (dragged.length > 0) {
+        startDrag(dragged, dragged[0].id);
+      }
+    },
+    [startDrag],
+  );
+
+  const handleSelectionDrag: SelectionDragHandler = useCallback(
+    (_, dragged) => followDrag(dragged.find(n => n.id === dragRef.current?.refId)),
+    [followDrag],
+  );
+
+  const handleSelectionDragStop: SelectionDragHandler = useCallback((_, dragged) => finishDrag(dragged), [finishDrag]);
 
   const resetContexts = useCallback(() => ctxManager.reset(), []);
 
@@ -345,8 +426,9 @@ const MapComp = ({
           nodeDragThreshold={10}
           onNodeDragStart={handleNodeDragStart}
           onNodeDrag={handleNodeDrag}
-          onNodeDragStop={handleDragStop}
-          onSelectionDragStart={beginDrag}
+          onNodeDragStop={handleNodeDragStop}
+          onSelectionDragStart={handleSelectionDragStart}
+          onSelectionDrag={handleSelectionDrag}
           onSelectionDragStop={handleSelectionDragStop}
           onConnectStart={() => update({ isConnecting: true })}
           onConnectEnd={() => update({ isConnecting: false })}
@@ -397,7 +479,7 @@ const MapComp = ({
         </button> */}
       </div>
 
-      <ContextMenuRoot {...rootCtxProps} />
+      <ContextMenuRoot {...rootCtxProps} onSaveLayout={isAutoLayoutEnabled && canSaveLayout ? saveLayout : undefined} />
       <ContextMenuConnection {...connectionCtxProps} />
     </>
   );

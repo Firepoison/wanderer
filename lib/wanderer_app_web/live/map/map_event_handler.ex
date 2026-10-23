@@ -372,7 +372,7 @@ defmodule WandererAppWeb.MapEventHandler do
           temporary_name: temporary_name,
           status: status,
           visible: visible
-        } = _system,
+        } = system,
         include_static_data? \\ true
       ) do
     comments_count =
@@ -399,7 +399,9 @@ defmodule WandererAppWeb.MapEventHandler do
         tag: tag,
         temporary_name: temporary_name,
         comments_count: comments_count,
-        visible: visible
+        visible: visible,
+        # Auto-layout anchors each cluster on its oldest system (see useAutoLayout.ts).
+        inserted_at: Map.get(system, :inserted_at)
       }
 
     system_info =

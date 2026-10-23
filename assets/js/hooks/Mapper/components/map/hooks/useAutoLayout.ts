@@ -1,23 +1,24 @@
-import { Dispatch, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import debounce from 'lodash.debounce';
+import { Dispatch, SetStateAction, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Edge, Node, XYPosition } from 'reactflow';
 
 import { SolarSystemRawType } from '@/hooks/Mapper/types';
 import { OutCommand, OutCommandHandler } from '@/hooks/Mapper/types/mapHandlers.ts';
-import { UserPermission } from '@/hooks/Mapper/types/permissions.ts';
-import { useMapCheckPermissions, useMapGetOption } from '@/hooks/Mapper/mapRootProvider/hooks/api';
-import { computeBoundsCenter } from '@/hooks/Mapper/helpers/recenterSystems.ts';
+import { useMapGetOption } from '@/hooks/Mapper/mapRootProvider/hooks/api';
+import { useStructureChangeListener } from '@/hooks/Mapper/events';
 import {
-  getConnectedComponents,
+  computePlacements,
   getLayoutEngine,
-  LayoutEdgeInput,
-  LayoutNodeInput,
   LayoutOptions,
+  Placement,
+  reconcilePositions,
 } from '@/hooks/Mapper/components/map/layout';
 
-const PERSIST_PERMISSIONS = [UserPermission.UPDATE_SYSTEM];
-const DEFAULT_NODE_W = 130;
-const DEFAULT_NODE_H = 34;
+// Every client lays out with the same nominal node size, so they all compute identical offsets
+// whatever theme each one uses. It is the largest theme's node (accessible-large-theme.scss), so
+// no theme's nodes overlap.
+const LAYOUT_NODE_SIZE = { width: 142, height: 37 };
+
+const NO_PLACEMENTS: Map<string, Placement> = new Map();
 
 /**
  * `auto_layout_options` holds one option bag per engine, so switching engines preserves the
@@ -82,7 +83,16 @@ class Fingerprint {
   }
 }
 
-type PersistFlush = { (): void; cancel(): void; flush(): void };
+// Systems without a creation time sort after every system that has one.
+const createdAtOf = (system: SolarSystemRawType | undefined): number => {
+  const at = Date.parse(system?.inserted_at ?? '');
+  return Number.isNaN(at) ? Infinity : at;
+};
+
+export interface PositionUpdate {
+  solar_system_id: string;
+  position: XYPosition;
+}
 
 interface UseAutoLayoutProps {
   nodes: Node<SolarSystemRawType>[];
@@ -97,50 +107,55 @@ interface UseAutoLayoutProps {
 }
 
 export interface UseAutoLayoutResult {
+  enabled: boolean;
   /**
    * If auto-layout is enabled and `nodeId` belongs to a managed cluster (a connected group of
    * unlocked systems), returns every node id in that cluster (including itself); otherwise
    * undefined. The drag handlers use this to move a whole tree together.
    */
   getCluster: (nodeId: string) => string[] | undefined;
-  /**
-   * Call when the user starts dragging nodes. Sends any queued auto-layout positions right away
-   * (so they reach the server *before* the drop's positions rather than overwriting them), and
-   * suspends layout until `endDrag` so a mid-drag recompute can't fight the drag.
-   */
+  /** Call when the user starts dragging nodes. Suspends reconciling until `endDrag`. */
   beginDrag: () => void;
-  /** Call after the drop's positions have been sent. Re-runs any layout deferred by the drag. */
+  /** Call after the drop's positions have been saved. Reconciles anything deferred by the drag. */
   endDrag: () => void;
+  /**
+   * Persists positions the user chose, recording them as the nodes' stored positions right away
+   * rather than waiting for the server's echo: the next reconcile places each cluster from its
+   * anchor's stored position, and would otherwise snap a just-dropped tree back to where it was.
+   */
+  savePositions: (updates: PositionUpdate[]) => void;
+  /**
+   * Persists the displayed layout as every managed node's stored position, so the arrangement
+   * survives turning auto-layout off and is what the API and exports report.
+   */
+  saveLayout: () => void;
 }
 
 /**
- * Map-wide automatic layout. When enabled (a `Map.options` policy set by an admin), it
- * deterministically arranges *managed* nodes — unlocked systems connected to at least one
- * other unlocked system — into a tree using the selected pluggable engine. Disconnected and
- * locked systems keep their positions.
+ * Map-wide automatic layout. When enabled (a `Map.options` policy set by an admin), it arranges
+ * *managed* nodes — unlocked systems connected to at least one other unlocked system — into a
+ * tree using the selected pluggable engine. Disconnected and locked systems keep their positions.
  *
- * Movement model (see the drag handlers in Map.tsx): managed nodes stay normally draggable
- * (`!locked`), but dragging one translates its *entire cluster* together via `getCluster`, so
- * the tree shape is preserved and users reposition whole trees rather than single nodes. This
- * applies to everyone; server-side permission (update_system) still governs who can persist.
+ * The layout is a view: nothing here writes it to the server on its own. Each cluster is pinned
+ * to an anchor system (`pickAnchor`), and every member is displayed at the anchor's *stored*
+ * position plus the offset the engine computed for it. Structure, options, root, stored
+ * positions and the nominal LAYOUT_NODE_SIZE are all shared state, so every client derives the
+ * same picture, and a server echo can't pull a node out of its tree — the next reconcile puts it
+ * back.
  *
- * Every client that may update systems persists the *auto-arranged* positions it computes, so
- * the server never keeps pre-layout coordinates just because no admin had the map open (a later
- * update_system echo would then carry those stale coordinates and pull the node out of the
- * tree). Concurrent clients compute from the same server state, so their writes agree up to the
- * determinism caveat below; last write wins. Manual cluster drags are persisted by whoever
- * performs them.
+ * Two passes: the engine runs only when the structure changes (see the signature below), while
+ * a cheap reconcile runs on every `nodes` change, before paint, to apply the placements and to
+ * return nodes that just left the layout to their stored positions.
  *
- * TODO(layout-determinism): the result is not yet a pure function of structure — it depends on
- * per-client measured node dimensions and on each client's current positions (via the centroid
- * translation below), so two admins can compute different coordinates for the same graph and
- * the last write wins. Related: a layout computed before React Flow has measured a new node
- * uses the DEFAULT_NODE_* placeholder and is not recomputed when the real size arrives, because
- * dimensions are deliberately kept out of the signature.
+ * Positions are written only for something a user did. Dragging moves whole clusters (see the
+ * drag handlers in Map.tsx) and saves what the user sees; locking, deleting, disconnecting or
+ * re-rooting first saves the clusters involved (`emitStructureChange`); an admin can save the
+ * whole layout (`saveLayout`). Clusters nobody has touched since they were laid out keep their
+ * older stored arrangement, which is what the API, exports and a disabled auto-layout show, and
+ * what a node falls back to when a change no client made (connection or system auto-expiry)
+ * takes it out of the layout.
  */
 export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayoutProps): UseAutoLayoutResult => {
-  const canPersist = useMapCheckPermissions(PERSIST_PERMISSIONS);
-
   const enabled = useMapGetOption('auto_layout_enabled') === 'true';
   const engineRaw = useMapGetOption('auto_layout_engine');
   const optionsRaw = useMapGetOption('auto_layout_options');
@@ -164,41 +179,22 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
   const clusterByNodeRef = useRef<Map<string, string[]>>(new Map());
   const onCommandRef = useRef(onCommand);
   onCommandRef.current = onCommand;
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
 
-  // While the user drags, layout is deferred; bumping `dragEpoch` on drop re-runs the effect so
-  // a structural change that arrived mid-drag is laid out from the dropped positions.
+  const [placements, setPlacements] = useState<Map<string, Placement>>(NO_PLACEMENTS);
+  // Nodes the last reconcile placed, so the next one knows which nodes just left the layout.
+  const placedRef = useRef<Set<string>>(new Set());
+
+  // While the user drags, reconciling is deferred so it can't fight the drag; bumping
+  // `dragEpoch` on drop reconciles from the positions the drop saved.
   const draggingRef = useRef(false);
   const [dragEpoch, setDragEpoch] = useState(0);
-
-  // Debounced persistence of the auto-arranged layout. Updates accumulate in `pendingRef`
-  // (keyed by system id) rather than being passed as arguments, so a later run that moves
-  // nothing cannot replace — and thereby discard — an earlier run's batch.
-  const pendingRef = useRef<Map<string, XYPosition>>(new Map());
-  const flushRef = useRef<PersistFlush | null>(null);
-  if (!flushRef.current) {
-    flushRef.current = debounce(() => {
-      const pending = pendingRef.current;
-      if (pending.size === 0) {
-        return;
-      }
-      const data = Array.from(pending, ([solar_system_id, position]) => ({ solar_system_id, position }));
-      pending.clear();
-      onCommandRef.current({ type: OutCommand.updateSystemPositions, data });
-    }, 600);
-  }
-
-  // Drop a pending persist rather than pushing it onto a torn-down LiveView hook.
-  useEffect(() => () => flushRef.current?.cancel(), []);
 
   const getCluster = useCallback((nodeId: string) => clusterByNodeRef.current.get(nodeId), []);
 
   const beginDrag = useCallback(() => {
     draggingRef.current = true;
-    flushRef.current?.flush();
-    // Discard a layout still awaiting the engine: applying it mid-drag would reshape the tree
-    // under the cursor. Clearing the in-flight marker lets the same structure run again later.
-    runIdRef.current++;
-    inFlightSigRef.current = null;
   }, []);
 
   const endDrag = useCallback(() => {
@@ -209,16 +205,67 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
     setDragEpoch(e => e + 1);
   }, []);
 
+  const savePositions = useCallback(
+    (updates: PositionUpdate[]) => {
+      if (updates.length === 0) {
+        return;
+      }
+
+      const byId = new Map(updates.map(u => [u.solar_system_id, u.position]));
+      setNodes(nds =>
+        nds.map(n => {
+          const position = byId.get(n.id);
+          return position ? { ...n, position, data: { ...n.data, position } } : n;
+        }),
+      );
+
+      if (updates.length === 1) {
+        onCommandRef.current({ type: OutCommand.updateSystemPosition, data: updates[0] });
+      } else {
+        onCommandRef.current({ type: OutCommand.updateSystemPositions, data: updates });
+      }
+    },
+    [setNodes],
+  );
+
+  // Saves the displayed position of each of `ids` that differs from its stored one.
+  const saveDisplayed = useCallback(
+    (ids: Set<string>) => {
+      const updates: PositionUpdate[] = [];
+      nodesRef.current.forEach(n => {
+        const stored = n.data?.position;
+        if (ids.has(n.id) && (stored?.x !== n.position.x || stored?.y !== n.position.y)) {
+          updates.push({ solar_system_id: n.id, position: n.position });
+        }
+      });
+      savePositions(updates);
+    },
+    [savePositions],
+  );
+
+  const saveLayout = useCallback(() => saveDisplayed(placedRef.current), [saveDisplayed]);
+
+  // A change this client is about to send will reshape these clusters: a locked or disconnected
+  // node leaves the layout for its stored position, and a split-off part re-anchors on its
+  // oldest member's stored position. Saving what is displayed first makes both of those the
+  // positions everyone already sees, so nothing jumps.
+  useStructureChangeListener(({ systemIds, removing }) => {
+    const ids = new Set<string>();
+    systemIds.forEach(id => clusterByNodeRef.current.get(id)?.forEach(member => ids.add(member)));
+    if (removing) {
+      systemIds.forEach(id => ids.delete(id));
+    }
+    saveDisplayed(ids);
+  });
+
+  // Layout pass: recompute placements when the structure changes.
   useEffect(() => {
     if (!enabled) {
       clusterByNodeRef.current = new Map();
       lastSigRef.current = '';
       inFlightSigRef.current = null;
       runIdRef.current++;
-      return;
-    }
-
-    if (draggingRef.current) {
+      setPlacements(NO_PLACEMENTS);
       return;
     }
 
@@ -239,72 +286,14 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
     const runId = ++runIdRef.current;
 
     const run = async () => {
-      const currentPos = new Map<string, XYPosition>();
-      const dims = new Map<string, { w: number; h: number }>();
-      const lockedSet = new Set<string>();
-      nodes.forEach(n => {
-        currentPos.set(n.id, n.position);
-        dims.set(n.id, { w: n.width ?? DEFAULT_NODE_W, h: n.height ?? DEFAULT_NODE_H });
-        if (n.data?.locked) {
-          lockedSet.add(n.id);
-        }
+      const result = await computePlacements({
+        engine,
+        nodes: nodes.map(n => ({ id: n.id, locked: !!n.data?.locked, createdAt: createdAtOf(n.data) })),
+        edges: edges.map(e => ({ source: e.source, target: e.target })),
+        rootId,
+        options,
+        nodeSize: LAYOUT_NODE_SIZE,
       });
-
-      const unlockedIds = nodes.filter(n => !lockedSet.has(n.id)).map(n => n.id);
-      const layoutEdges: LayoutEdgeInput[] = edges
-        .filter(
-          e =>
-            !lockedSet.has(e.source) &&
-            !lockedSet.has(e.target) &&
-            currentPos.has(e.source) &&
-            currentPos.has(e.target),
-        )
-        .map(e => ({ source: e.source, target: e.target }));
-
-      const components = getConnectedComponents(unlockedIds, layoutEdges).filter(c => c.nodeIds.length >= 2);
-
-      const clusterByNode = new Map<string, string[]>();
-      const newPositions = new Map<string, XYPosition>();
-
-      for (const comp of components) {
-        const layoutNodes: LayoutNodeInput[] = comp.nodeIds.map(id => ({
-          id,
-          width: dims.get(id)?.w ?? DEFAULT_NODE_W,
-          height: dims.get(id)?.h ?? DEFAULT_NODE_H,
-        }));
-
-        const compRoot = rootId && comp.nodeIds.includes(rootId) ? rootId : null;
-
-        const result = await engine.compute({
-          nodes: layoutNodes,
-          edges: comp.edges,
-          rootId: compRoot,
-          options,
-        });
-
-        // Preserve the component's original centroid: clusters stay where users put them,
-        // only their internal structure is tidied.
-        const laidOutItems = comp.nodeIds
-          .filter(id => result.positions[id])
-          .map(id => ({ position: result.positions[id] }));
-        const originalItems = comp.nodeIds
-          .filter(id => currentPos.has(id))
-          .map(id => ({ position: currentPos.get(id) as XYPosition }));
-
-        const laidOutCenter = computeBoundsCenter(laidOutItems);
-        const originalCenter = computeBoundsCenter(originalItems);
-        const dx = originalCenter.x - laidOutCenter.x;
-        const dy = originalCenter.y - laidOutCenter.y;
-
-        comp.nodeIds.forEach(id => {
-          const p = result.positions[id];
-          if (!p) {
-            return;
-          }
-          clusterByNode.set(id, comp.nodeIds);
-          newPositions.set(id, { x: Math.round(p.x + dx), y: Math.round(p.y + dy) });
-        });
-      }
 
       // A newer structure started laying out while we were awaiting the engine — discard this
       // result instead of letting the slower run overwrite the newer one.
@@ -312,36 +301,8 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
         return;
       }
 
-      clusterByNodeRef.current = clusterByNode;
-
-      // Diff against the snapshot this layout was computed from, so nothing mutates inside the
-      // state updater (which React may invoke more than once).
-      const moved = new Map<string, XYPosition>();
-      nodes.forEach(n => {
-        const pos = newPositions.get(n.id);
-        if (!pos) {
-          return;
-        }
-        if (Math.abs(pos.x - n.position.x) > 0.5 || Math.abs(pos.y - n.position.y) > 0.5) {
-          moved.set(n.id, pos);
-        }
-      });
-
-      if (moved.size === 0) {
-        return;
-      }
-
-      setNodes(nds =>
-        nds.map(n => {
-          const pos = moved.get(n.id);
-          return pos ? { ...n, position: pos } : n;
-        }),
-      );
-
-      if (canPersist) {
-        moved.forEach((position, id) => pendingRef.current.set(id, position));
-        flushRef.current?.();
-      }
+      clusterByNodeRef.current = result.clusterByNode;
+      setPlacements(result.placements);
     };
 
     run()
@@ -360,7 +321,28 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
           inFlightSigRef.current = null;
         }
       });
-  }, [nodes, edges, enabled, engine, engineId, options, optionsKey, rootId, canPersist, setNodes, dragEpoch]);
+  }, [nodes, edges, enabled, engine, engineId, options, optionsKey, rootId]);
 
-  return { getCluster, beginDrag, endDrag };
+  // Reconcile pass: runs before paint, so a node reset by a server echo is put back in its tree
+  // without ever being drawn at its stored position.
+  useLayoutEffect(() => {
+    if (draggingRef.current) {
+      return;
+    }
+
+    const { moves, placed } = reconcilePositions(nodes, placements, placedRef.current);
+    placedRef.current = placed;
+    if (moves.size === 0) {
+      return;
+    }
+
+    setNodes(nds =>
+      nds.map(n => {
+        const position = moves.get(n.id);
+        return position ? { ...n, position } : n;
+      }),
+    );
+  }, [nodes, placements, dragEpoch, setNodes]);
+
+  return { enabled, getCluster, beginDrag, endDrag, savePositions, saveLayout };
 };
