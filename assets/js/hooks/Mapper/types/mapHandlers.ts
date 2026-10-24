@@ -296,6 +296,7 @@ export enum OutCommand {
   startTracking = 'startTracking',
 
   updateLayoutSettings = 'update_layout_settings',
+  saveLayoutPositions = 'save_layout_positions',
 
   // Only UI commands
   openSettings = 'open_settings',

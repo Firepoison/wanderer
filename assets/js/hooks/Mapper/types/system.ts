@@ -119,11 +119,15 @@ export type SolarSystemRawType = {
   temporary_name: string | null;
   linked_sig_eve_id: string | null;
   comments_count: number | null;
-  /** ISO 8601 creation time; auto-layout anchors each cluster on its oldest system. */
-  inserted_at?: string | null;
 
   system_static_info: SolarSystemStaticInfoRaw;
   system_signatures: SystemSignature[];
+};
+
+/** A system's new stored position, as the position update commands take it. */
+export type SystemPositionUpdate = {
+  solar_system_id: string;
+  position: XYPosition;
 };
 
 export type SearchSystemItem = {

@@ -230,12 +230,7 @@ defmodule WandererAppWeb.MapSystemsEventHandler do
         } = socket
       )
       when not is_nil(main_character_id) do
-    updates =
-      positions
-      |> Enum.map(&parse_system_position/1)
-      |> Enum.reject(&is_nil/1)
-
-    WandererApp.Map.Server.update_system_positions(map_id, updates)
+    WandererApp.Map.Server.update_system_positions(map_id, parse_system_positions(positions))
 
     {:noreply, socket}
   end
@@ -384,6 +379,15 @@ defmodule WandererAppWeb.MapSystemsEventHandler do
 
   defp can_update_system?(:locked, %{lock_system: false} = _user_permissions), do: false
   defp can_update_system?(_key, _user_permissions), do: true
+
+  @doc """
+  Parses position updates as the client sends them —
+  `%{"solar_system_id" => id, "position" => %{"x" => x, "y" => y}}` — dropping malformed ones.
+  """
+  def parse_system_positions(positions) when is_list(positions),
+    do: positions |> Enum.map(&parse_system_position/1) |> Enum.reject(&is_nil/1)
+
+  def parse_system_positions(_positions), do: []
 
   defp update_system_position(map_id, position) do
     case parse_system_position(position) do

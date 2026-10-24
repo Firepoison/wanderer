@@ -359,12 +359,21 @@ defmodule WandererAppWeb.MapCoreEventHandler do
         |> then(fn options ->
           case Map.fetch(options, "auto_layout_engine") do
             {:ok, engine_id} ->
-              Map.put(options, "auto_layout_engine", WandererApp.Map.LayoutEngines.engine(engine_id).id)
+              Map.put(
+                options,
+                "auto_layout_engine",
+                WandererApp.Map.LayoutEngines.engine(engine_id).id
+              )
 
             :error ->
               options
           end
         end)
+
+      # The displayed positions of the clusters this change re-anchors (see emitStructureChange),
+      # saved first and under the same admin check, so the save can't fail on its own while the
+      # change goes through.
+      save_layout_positions(map_id, payload)
 
       with {:ok, map} <- WandererApp.MapRepo.get(map_id),
            {:ok, current_options} <- WandererApp.MapRepo.options_to_form_data(map),
@@ -384,6 +393,22 @@ defmodule WandererAppWeb.MapCoreEventHandler do
           Logger.error("Failed to update layout settings: #{inspect(error)}")
           {:reply, %{success: false, error: "Failed to update layout settings"}, socket}
       end
+    else
+      {:reply, %{success: false, error: "unauthorized"}, socket}
+    end
+  end
+
+  # "Save Layout Positions": stores the whole displayed auto-layout. Like the auto-layout
+  # settings it is a map-wide admin action, so unlike the member position updates it needs
+  # admin_map rather than a tracked main character.
+  def handle_ui_event(
+        "save_layout_positions",
+        payload,
+        %{assigns: %{map_id: map_id, user_permissions: user_permissions}} = socket
+      ) do
+    if user_permissions.admin_map do
+      save_layout_positions(map_id, payload)
+      {:reply, %{success: true}, socket}
     else
       {:reply, %{success: false, error: "unauthorized"}, socket}
     end
@@ -468,6 +493,14 @@ defmodule WandererAppWeb.MapCoreEventHandler do
       {:error, :no_character}
     end
   end
+
+  # Positions sent with an admin layout action, in the same shape as `update_system_positions`.
+  defp save_layout_positions(map_id, payload),
+    do:
+      WandererApp.Map.Server.update_system_positions(
+        map_id,
+        payload |> Map.get("positions") |> MapSystemsEventHandler.parse_system_positions()
+      )
 
   defp maybe_start_map(map_id) do
     {:ok, map_server_started} = WandererApp.Cache.lookup("map_#{map_id}:started", false)

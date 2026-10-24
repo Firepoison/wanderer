@@ -344,7 +344,7 @@ defmodule WandererAppWeb.MapEventHandler do
           type: type,
           ship_size_type: ship_size_type,
           locked: locked
-        } = _connection
+        } = connection
       ),
       do: %{
         id: "#{solar_system_source}_#{solar_system_target}",
@@ -354,7 +354,9 @@ defmodule WandererAppWeb.MapEventHandler do
         ship_size_type: ship_size_type,
         locked: locked,
         source: "#{solar_system_source}",
-        target: "#{solar_system_target}"
+        target: "#{solar_system_target}",
+        # Auto-layout anchors each cluster on its oldest connection (see anchoring.ts).
+        inserted_at: Map.get(connection, :inserted_at)
       }
 
   def map_ui_system(
@@ -372,7 +374,7 @@ defmodule WandererAppWeb.MapEventHandler do
           temporary_name: temporary_name,
           status: status,
           visible: visible
-        } = system,
+        } = _system,
         include_static_data? \\ true
       ) do
     comments_count =
@@ -399,9 +401,7 @@ defmodule WandererAppWeb.MapEventHandler do
         tag: tag,
         temporary_name: temporary_name,
         comments_count: comments_count,
-        visible: visible,
-        # Auto-layout anchors each cluster on its oldest system (see useAutoLayout.ts).
-        inserted_at: Map.get(system, :inserted_at)
+        visible: visible
       }
 
     system_info =

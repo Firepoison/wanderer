@@ -74,7 +74,8 @@ const edgeTypes = {
 export const MAP_ROOT_ID = 'MAP_ROOT_ID';
 
 // Saving the layout rewrites the stored position of every laid-out system, so it is an admin
-// action, like the auto-layout settings themselves.
+// action, like the auto-layout settings themselves. The server enforces that
+// (`save_layout_positions` checks admin_map); this only hides the menu item from everyone else.
 const SAVE_LAYOUT_PERMISSIONS = [UserPermission.ADMIN_MAP];
 
 interface MapCompProps {

@@ -1,15 +1,19 @@
 import { LayoutEdgeInput } from './types';
 
-export interface GraphComponent {
+export interface GraphComponent<E extends LayoutEdgeInput = LayoutEdgeInput> {
   nodeIds: string[];
-  edges: LayoutEdgeInput[];
+  edges: E[];
 }
 
 /**
  * Connected components over `nodeIds` using `edges` (edges whose endpoints are not both in
- * `nodeIds` are ignored). Members and components are returned in deterministic sorted order.
+ * `nodeIds` are ignored). Members and components are returned in deterministic sorted order;
+ * each component's edges are the input edge objects themselves, extra fields included.
  */
-export const getConnectedComponents = (nodeIds: string[], edges: LayoutEdgeInput[]): GraphComponent[] => {
+export const getConnectedComponents = <E extends LayoutEdgeInput>(
+  nodeIds: string[],
+  edges: E[],
+): GraphComponent<E>[] => {
   const nodeSet = new Set(nodeIds);
   const adj = new Map<string, Set<string>>();
   nodeIds.forEach(id => adj.set(id, new Set()));
@@ -21,7 +25,7 @@ export const getConnectedComponents = (nodeIds: string[], edges: LayoutEdgeInput
   });
 
   const visited = new Set<string>();
-  const components: GraphComponent[] = [];
+  const components: GraphComponent<E>[] = [];
 
   for (const start of [...nodeIds].sort()) {
     if (visited.has(start)) {
