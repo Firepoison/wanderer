@@ -35,6 +35,9 @@ const preset = (presets: Record<string, number>, value: string | undefined): num
 
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
+// Not localeCompare: the order must be the same on every client whatever its locale.
+const byCodePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
 /**
  * Re-orient edges as a spanning tree rooted at `rootId` (parent -> child via BFS) so the
  * root lands at rank 0. Non-tree edges (cycles) are appended as-is; dagre handles the
@@ -107,14 +110,14 @@ export const dagreEngine: LayoutEngine = {
     g.setDefaultEdgeLabel(() => ({}));
 
     // Deterministic insertion order -> identical layout on every client.
-    const sortedNodes = [...nodes].sort((a, b) => a.id.localeCompare(b.id));
+    const sortedNodes = [...nodes].sort((a, b) => byCodePoint(a.id, b.id));
     sortedNodes.forEach(n => g.setNode(n.id, { width: n.width, height: n.height }));
 
     const useEdges =
       rootId && nodes.some(n => n.id === rootId) ? orientFromRoot(sortedNodes, edges, rootId) : [...edges];
 
     useEdges
-      .sort((a, b) => a.source.localeCompare(b.source) || a.target.localeCompare(b.target))
+      .sort((a, b) => byCodePoint(a.source, b.source) || byCodePoint(a.target, b.target))
       .forEach(e => g.setEdge(e.source, e.target));
 
     dagre.layout(g);
