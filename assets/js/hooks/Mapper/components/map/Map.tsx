@@ -20,7 +20,6 @@ import ReactFlow, {
   SelectionDragHandler,
   SelectionMode,
   useReactFlow,
-  XYPosition,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import classes from './Map.module.scss';
@@ -34,6 +33,7 @@ import {
 } from './components';
 import { getBehaviorForTheme } from './helpers/getThemeBehavior';
 import { useAutoLayout, useEdgesState, useMapHandlers, useNodesState, useUpdateNodes } from './hooks';
+import { ClusterDrag, clusterDragTargets, startClusterDrag } from './layout';
 import { useBackgroundVars } from './hooks/useBackgroundVars';
 import { MapViewport, OnMapAddSystemCallback, OnMapSelectionChange } from './map.types';
 import type { Viewport } from '@reactflow/core/dist/esm/types';
@@ -144,12 +144,8 @@ const MapComp = ({
   nodesRef.current = nodes;
 
   // While auto-layout is on, dragging any node of a connected cluster moves the whole tree
-  // together (its relative shape is preserved). React Flow moves every dragged node by the same
-  // delta, so the drag is tracked by one of them (`refId`); `followers` are the members of the
-  // dragged nodes' clusters that React Flow isn't moving itself. `start` holds the start
-  // positions of the dragged nodes and the followers.
-  // Record (not Map) — the exported `Map` component below shadows the global Map constructor.
-  const dragRef = useRef<{ refId: string; followers: Set<string>; start: Record<string, XYPosition> } | null>(null);
+  // together, its shape preserved; see `ClusterDrag` for how each cluster follows its leader.
+  const dragRef = useRef<ClusterDrag | null>(null);
 
   const { handleRootContext, ...rootCtxProps } = useContextMenuRootHandlers({ onAddSystem, onCommand });
   const { handleConnectionContext, ...connectionCtxProps } = useContextMenuConnectionHandlers();
@@ -179,65 +175,35 @@ const MapComp = ({
   );
 
   const startDrag = useCallback(
-    (dragged: Node[], refId: string) => {
+    (dragged: Node[], grabbedId: string) => {
       beginDrag();
-      const draggedIds = new Set(dragged.map(n => n.id));
-      const followers = new Set<string>();
-      draggedIds.forEach(id =>
-        getCluster(id)?.forEach(member => {
-          if (!draggedIds.has(member)) {
-            followers.add(member);
-          }
-        }),
+      dragRef.current = startClusterDrag(
+        nodesRef.current,
+        dragged.map(n => n.id),
+        grabbedId,
+        getCluster,
       );
-
-      // Single pass over the nodes with a membership set — a `find` per member would be
-      // O(members * nodes), and for auto-layout maps most nodes are in one cluster.
-      const start: Record<string, XYPosition> = {};
-      nodesRef.current.forEach(n => {
-        if (draggedIds.has(n.id) || followers.has(n.id)) {
-          start[n.id] = { x: n.position.x, y: n.position.y };
-        }
-      });
-      dragRef.current = { refId, followers, start };
     },
     [getCluster, beginDrag],
   );
 
   const followDrag = useCallback(
-    (ref: Node | undefined) => {
+    (dragged: Node[]) => {
       const drag = dragRef.current;
-      if (!drag || !ref || ref.id !== drag.refId || drag.followers.size === 0) {
+      if (!drag) {
         return;
       }
-      const origin = drag.start[ref.id];
-      if (!origin) {
-        return;
-      }
-      // Move the followers rigidly with the dragged nodes. This goes through the controlled
-      // state setter, so it is queued *after* React Flow's own position change for the dragged
-      // nodes and composes with it; re-asserting the reference node's position below is then a
-      // no-op in the common case, and a safety net if the ordering ever changes.
-      const dx = ref.position.x - origin.x;
-      const dy = ref.position.y - origin.y;
+      const targets = clusterDragTargets(drag, dragged);
+      // Move every cluster member to where its leader puts it. This goes through the controlled
+      // state setter, so it is queued *after* React Flow's own position changes for the dragged
+      // nodes, and overrides them for any dragged node that snapped differently from its leader.
       setNodes(nds =>
         nds.map(n => {
-          if (n.id === ref.id) {
-            if (n.position.x === ref.position.x && n.position.y === ref.position.y) {
-              return n;
-            }
-            return { ...n, position: { x: ref.position.x, y: ref.position.y } };
-          }
-          if (!drag.followers.has(n.id)) {
+          const target = targets[n.id];
+          if (!target || (n.position.x === target.x && n.position.y === target.y)) {
             return n;
           }
-          const s = drag.start[n.id];
-          const x = s.x + dx;
-          const y = s.y + dy;
-          if (n.position.x === x && n.position.y === y) {
-            return n;
-          }
-          return { ...n, position: { x, y } };
+          return { ...n, position: target };
         }),
       );
     },
@@ -249,23 +215,13 @@ const MapComp = ({
       const drag = dragRef.current;
       dragRef.current = null;
 
-      const updates = dragged.map(n => ({ solar_system_id: n.id, position: n.position }));
-      const ref = drag && dragged.find(n => n.id === drag.refId);
-      const origin = ref && drag.start[ref.id];
-      if (drag && ref && origin) {
-        const dx = ref.position.x - origin.x;
-        const dy = ref.position.y - origin.y;
-        // Derive the followers' final positions from their start positions and the drag's total
-        // delta — exactly the transform followDrag applied. Reading them back from React Flow's
-        // store instead would pick up the previous frame's coordinates and snap the cluster
-        // backwards.
-        drag.followers.forEach(id => {
-          const s = drag.start[id];
-          if (s) {
-            updates.push({ solar_system_id: id, position: { x: s.x + dx, y: s.y + dy } });
-          }
-        });
-      }
+      // Cluster members get their start positions plus their leader's total delta — exactly the
+      // transform followDrag applied. Reading them back from React Flow's store instead would
+      // pick up the previous frame's coordinates and snap the cluster backwards. Dragged nodes
+      // outside any cluster keep where React Flow put them.
+      const targets = drag ? clusterDragTargets(drag, dragged) : {};
+      const updates = dragged.filter(n => !targets[n.id]).map(n => ({ solar_system_id: n.id, position: n.position }));
+      Object.entries(targets).forEach(([id, position]) => updates.push({ solar_system_id: id, position }));
 
       savePositions(updates);
       endDrag();
@@ -325,13 +281,17 @@ const MapComp = ({
     [startDrag],
   );
 
-  const handleNodeDrag: NodeDragHandler = useCallback((_, node) => followDrag(node), [followDrag]);
+  const handleNodeDrag: NodeDragHandler = useCallback(
+    (_, node, dragged) => followDrag(dragged.length > 0 ? dragged : [node]),
+    [followDrag],
+  );
 
   const handleNodeDragStop: NodeDragHandler = useCallback(
     (_, node, dragged) => finishDrag(dragged.length > 0 ? dragged : [node]),
     [finishDrag],
   );
 
+  // Nothing is grabbed in a selection drag, so any dragged node can lead its own cluster.
   const handleSelectionDragStart: SelectionDragHandler = useCallback(
     (_, dragged) => {
       if (dragged.length > 0) {
@@ -341,10 +301,7 @@ const MapComp = ({
     [startDrag],
   );
 
-  const handleSelectionDrag: SelectionDragHandler = useCallback(
-    (_, dragged) => followDrag(dragged.find(n => n.id === dragRef.current?.refId)),
-    [followDrag],
-  );
+  const handleSelectionDrag: SelectionDragHandler = useCallback((_, dragged) => followDrag(dragged), [followDrag]);
 
   const handleSelectionDragStop: SelectionDragHandler = useCallback((_, dragged) => finishDrag(dragged), [finishDrag]);
 
