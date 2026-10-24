@@ -133,12 +133,13 @@ jobs:
           mix ecto.create
           mix ecto.migrate
 
-      - name: Run tests with coverage
+      - name: Run tests
         id: tests
         run: |
-          # Run tests with coverage; record the results, then fail the step if any test failed
+          # Record the results, then fail the step if any test failed. No --cover: with it, mix test
+          # also fails below coveralls.json's minimum_coverage. The coverage step reports coverage.
           set +e
-          mix test --cover 2>&1 | tee test_output.txt
+          mix test 2>&1 | tee test_output.txt
           exit_code=${PIPESTATUS[0]}
           set -e
           output=$(cat test_output.txt)
