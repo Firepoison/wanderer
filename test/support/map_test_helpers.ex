@@ -223,11 +223,26 @@ defmodule WandererApp.MapTestHelpers do
   def setup_system_static_info_cache(systems \\ nil) do
     test_systems = systems || default_test_systems()
 
+    restore_cache_on_exit(:system_static_info_cache, Map.keys(test_systems))
+
     Enum.each(test_systems, fn {solar_system_id, system_info} ->
       Cachex.put(:system_static_info_cache, solar_system_id, system_info)
     end)
 
     :ok
+  end
+
+  # The cache is shared by every test: put back what was there before, so entries a test seeds
+  # don't leak into the tests that run after it.
+  defp restore_cache_on_exit(cache, keys) do
+    previous = Map.new(keys, fn key -> {key, elem(Cachex.get(cache, key), 1)} end)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Enum.each(previous, fn
+        {key, nil} -> Cachex.del(cache, key)
+        {key, value} -> Cachex.put(cache, key, value)
+      end)
+    end)
   end
 
   @doc """
