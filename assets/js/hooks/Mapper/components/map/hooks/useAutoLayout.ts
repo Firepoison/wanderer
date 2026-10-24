@@ -7,12 +7,17 @@ import { useMapGetOption } from '@/hooks/Mapper/mapRootProvider/hooks/api';
 import { useStructureChangeListener } from '@/hooks/Mapper/events';
 import {
   computePlacements,
+  connectionCreatedAt,
+  displayedUpdates,
   EMPTY_RECONCILE_STATE,
   getLayoutEngine,
-  LayoutOptions,
+  layoutSignature,
   Placement,
+  readEngineOptions,
   ReconcileState,
   reconcileNodes,
+  serializeOptions,
+  structureChangeIds,
 } from '@/hooks/Mapper/components/map/layout';
 
 // Every client lays out with the same nominal node size, so they all compute identical offsets
@@ -21,75 +26,6 @@ import {
 const LAYOUT_NODE_SIZE = { width: 142, height: 37 };
 
 const NO_PLACEMENTS: Map<string, Placement> = new Map();
-
-/**
- * `auto_layout_options` holds one option bag per engine, so switching engines preserves the
- * other's settings. Nothing here interprets the contents — that is the selected engine's job.
- */
-const readEngineOptions = (raw: unknown, engineId: string): LayoutOptions => {
-  if (typeof raw !== 'string' || raw === '') {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(raw);
-    const bag = parsed?.[engineId];
-    return bag && typeof bag === 'object' ? (bag as LayoutOptions) : {};
-  } catch {
-    return {};
-  }
-};
-
-// Stable across re-parses so the layout signature only changes when a value actually changed.
-const serializeOptions = (options: LayoutOptions): string =>
-  Object.keys(options)
-    .sort()
-    .map(key => `${key}=${options[key]}`)
-    .join(',');
-
-const hashString = (value: string, seed: number): number => {
-  let h = seed;
-  for (let i = 0; i < value.length; i++) {
-    h = (Math.imul(h, 33) ^ value.charCodeAt(i)) | 0;
-  }
-  return h;
-};
-
-const hashChar = (code: number, seed: number): number => (Math.imul(seed, 33) ^ code) | 0;
-
-// Separator matters: without it hashing source-then-target is just hashing the concatenation,
-// so `a -> bc` and `ab -> c` would collide.
-const hashEdge = (source: string, target: string): number =>
-  hashString(target, hashChar(62 /* '>' */, hashString(source, 5381)));
-
-/**
- * Order-independent fingerprint of a set of hashes: two commutative accumulators (xor + sum)
- * plus a count. Lets the structural signature be built in a single allocation-free pass instead
- * of mapping to strings, sorting and serializing — which matters because the layout effect is
- * re-run on every `nodes`/`edges` identity change (i.e. every drag frame), not only on the
- * structural changes it actually cares about.
- */
-class Fingerprint {
-  private xor = 0;
-  private sum = 0;
-  private count = 0;
-
-  add(hash: number) {
-    this.xor ^= hash;
-    this.sum = (this.sum + hash) | 0;
-    this.count++;
-  }
-
-  toString() {
-    return `${this.count}:${this.xor}:${this.sum}`;
-  }
-}
-
-// Connections without a creation time sort after every connection that has one.
-const createdAtOf = (insertedAt: string | null | undefined): number => {
-  const at = Date.parse(insertedAt ?? '');
-  return Number.isNaN(at) ? Infinity : at;
-};
 
 interface UseAutoLayoutProps {
   nodes: Node<SolarSystemRawType>[];
@@ -240,52 +176,27 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
     [recordStored, sendPositions],
   );
 
-  // The displayed position of each of `ids` that differs from its stored one.
-  const displayedUpdates = useCallback((ids: Set<string>) => {
-    const updates: SystemPositionUpdate[] = [];
-    nodesRef.current.forEach(n => {
-      const stored = n.data?.position;
-      if (ids.has(n.id) && (stored?.x !== n.position.x || stored?.y !== n.position.y)) {
-        updates.push({ solar_system_id: n.id, position: n.position });
-      }
-    });
-    return updates;
-  }, []);
-
   const saveLayout = useCallback(() => {
-    const updates = displayedUpdates(reconcileRef.current.placed);
+    const updates = displayedUpdates(nodesRef.current, reconcileRef.current.placed);
     if (updates.length === 0) {
       return;
     }
     recordStored(updates);
     onCommandRef.current({ type: OutCommand.saveLayoutPositions, data: { positions: updates } });
-  }, [displayedUpdates, recordStored]);
+  }, [recordStored]);
 
   // A change this client is about to send will reshape these clusters: a locked or disconnected
   // node leaves the layout for its stored position, and a cluster that gains, loses or changes
   // its anchor is re-placed from the new anchor's stored position. Saving what is displayed
   // first makes those the positions everyone already sees, so nothing jumps.
   useStructureChangeListener(({ systemIds, removing, collect }) => {
-    // The systems' own clusters, plus their neighbours': a system being unlocked belongs to no
-    // cluster yet, but the clusters it is about to join are its neighbours'.
-    const changing = new Set(systemIds);
-    const touched = new Set(systemIds);
-    edgesRef.current.forEach(e => {
-      if (changing.has(e.source)) {
-        touched.add(e.target);
-      }
-      if (changing.has(e.target)) {
-        touched.add(e.source);
-      }
+    const ids = structureChangeIds({
+      systemIds,
+      removing,
+      edges: edgesRef.current,
+      clusterByNode: clusterByNodeRef.current,
     });
-
-    const ids = new Set<string>();
-    touched.forEach(id => clusterByNodeRef.current.get(id)?.forEach(member => ids.add(member)));
-    if (removing) {
-      systemIds.forEach(id => ids.delete(id));
-    }
-
-    const updates = displayedUpdates(ids);
+    const updates = displayedUpdates(nodesRef.current, ids);
     recordStored(updates);
     if (collect) {
       collect(updates);
@@ -305,14 +216,7 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
       return;
     }
 
-    const nodeFp = new Fingerprint();
-    nodes.forEach(n => nodeFp.add(hashString(n.id, n.data?.locked ? 5387 : 5381)));
-
-    // Connection ages pick anchors, so they are part of the structure too.
-    const edgeFp = new Fingerprint();
-    edges.forEach(e => edgeFp.add(hashString(e.data?.inserted_at ?? '', hashEdge(e.source, e.target))));
-
-    const signature = [engineId, optionsKey, rootId, nodeFp.toString(), edgeFp.toString()].join('|');
+    const signature = layoutSignature({ nodes, edges, engineId, optionsKey, rootId });
 
     // Positions aren't part of the signature, so this early-returns during drags/position
     // syncs and only recomputes the (expensive) layout on real structural changes.
@@ -326,7 +230,11 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
       const result = await computePlacements({
         engine,
         nodes: nodes.map(n => ({ id: n.id, locked: !!n.data?.locked })),
-        edges: edges.map(e => ({ source: e.source, target: e.target, createdAt: createdAtOf(e.data?.inserted_at) })),
+        edges: edges.map(e => ({
+          source: e.source,
+          target: e.target,
+          createdAt: connectionCreatedAt(e.data?.inserted_at),
+        })),
         rootId,
         options,
         nodeSize: LAYOUT_NODE_SIZE,
