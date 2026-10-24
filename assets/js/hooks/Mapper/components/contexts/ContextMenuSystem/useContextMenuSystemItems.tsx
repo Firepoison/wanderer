@@ -14,6 +14,7 @@ import { FastSystemActions } from '@/hooks/Mapper/components/contexts/components
 import { useMapCheckPermissions, useMapGetOption } from '@/hooks/Mapper/mapRootProvider/hooks/api';
 import { UserPermission } from '@/hooks/Mapper/types/permissions.ts';
 import { isWormholeSpace } from '@/hooks/Mapper/components/map/helpers/isWormholeSpace.ts';
+import { rootNodeMenuItems } from '@/hooks/Mapper/components/map/helpers/rootNode.ts';
 import { getSystemStaticInfo } from '@/hooks/Mapper/mapRootProvider/hooks/useLoadSystemStatic';
 import { MapAddIcon, MapDeleteIcon } from '@/hooks/Mapper/icons';
 import { PingType } from '@/hooks/Mapper/types';
@@ -161,15 +162,13 @@ export const useContextMenuSystemItems = ({
           ]
         : []),
 
-      ...(canAdminMap && isAutoLayoutEnabled
-        ? [
-            {
-              label: rootSystemId === systemId ? 'Unset root node' : 'Set as root node',
-              icon: PrimeIcons.SITEMAP,
-              command: onSetRootToggle,
-            },
-          ]
-        : []),
+      ...rootNodeMenuItems({
+        canAdminMap,
+        autoLayoutEnabled: isAutoLayoutEnabled,
+        rootSystemId,
+        systemId,
+        onToggle: onSetRootToggle,
+      }),
 
       ...(canDeleteSystem && !system.locked
         ? [

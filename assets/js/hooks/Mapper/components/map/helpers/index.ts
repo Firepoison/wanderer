@@ -6,3 +6,4 @@ export * from './getBackgroundClass';
 export * from './prepareUnsplashedChunks';
 export * from './checkPermissions';
 export * from './wormholeClassFillVars';
+export * from './rootNode';

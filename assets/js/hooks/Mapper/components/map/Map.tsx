@@ -32,7 +32,14 @@ import {
   useContextMenuRootHandlers,
 } from './components';
 import { getBehaviorForTheme } from './helpers/getThemeBehavior';
-import { useAutoLayout, useEdgesState, useMapHandlers, useNodesState, useUpdateNodes } from './hooks';
+import {
+  useAbandonedDragFallback,
+  useAutoLayout,
+  useEdgesState,
+  useMapHandlers,
+  useNodesState,
+  useUpdateNodes,
+} from './hooks';
 import { ClusterDrag, clusterDragTargets, startClusterDrag } from './layout';
 import { useBackgroundVars } from './hooks/useBackgroundVars';
 import { MapViewport, OnMapAddSystemCallback, OnMapSelectionChange } from './map.types';
@@ -244,36 +251,8 @@ const MapComp = ({
     endDrag();
   }, [setNodes, endDrag]);
 
-  // React Flow ends an aborted drag (a second finger on a touch screen) without calling
-  // onNodeDragStop/onSelectionDragStop, which would leave reconciling suspended. So once every
-  // pointer is released, give React Flow's own stop handler — which runs on that same release —
-  // a moment, and undo the drag if it never came. Tracking all pressed pointers keeps lifting a
-  // second finger mid-drag from ending a drag that is still going.
-  useEffect(() => {
-    const pressed = new Set<number>();
-    const onDown = (e: PointerEvent) => pressed.add(e.pointerId);
-    const onUp = (e: PointerEvent) => {
-      pressed.delete(e.pointerId);
-      const drag = dragRef.current;
-      if (!drag || pressed.size > 0) {
-        return;
-      }
-      setTimeout(() => {
-        if (dragRef.current === drag) {
-          abortDrag();
-        }
-      }, 100);
-    };
-
-    window.addEventListener('pointerdown', onDown, true);
-    window.addEventListener('pointerup', onUp, true);
-    window.addEventListener('pointercancel', onUp, true);
-    return () => {
-      window.removeEventListener('pointerdown', onDown, true);
-      window.removeEventListener('pointerup', onUp, true);
-      window.removeEventListener('pointercancel', onUp, true);
-    };
-  }, [abortDrag]);
+  // An aborted drag would otherwise leave reconciling suspended.
+  useAbandonedDragFallback(dragRef, abortDrag);
 
   // `dragged` holds every node React Flow is moving: the grabbed one plus any other selected.
   const handleNodeDragStart: NodeDragHandler = useCallback(
