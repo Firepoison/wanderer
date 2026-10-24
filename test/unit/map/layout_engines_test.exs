@@ -12,6 +12,7 @@ defmodule WandererApp.Map.LayoutEnginesTest do
 
   describe "catalog" do
     test "lists dagre as the default engine, labelled for the picker" do
+      assert [%{id: "dagre", label: "Tree"}] = LayoutEngines.engines()
       assert LayoutEngines.default_engine_id() == "dagre"
       assert LayoutEngines.engine_choices() == [{"Tree", "dagre"}]
     end

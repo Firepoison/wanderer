@@ -141,6 +141,55 @@ defmodule WandererApp.Map.AutoLayoutServerTest do
     end
   end
 
+  describe "position events from map members" do
+    defp tracked_member(map),
+      do:
+        socket(%{
+          map_id: map.id,
+          main_character_id: Ecto.UUID.generate(),
+          has_tracked_characters?: true,
+          user_permissions: %{update_system: true}
+        })
+
+    test "update_system_positions saves a cluster drag in one batch", %{map: map} do
+      payload = [position(@jita, 15, 30), position(@amarr, 215, 30), %{"bad" => "entry"}]
+
+      assert {:noreply, _} =
+               MapSystemsEventHandler.handle_ui_event(
+                 "update_system_positions",
+                 payload,
+                 tracked_member(map)
+               )
+
+      assert stored(map.id, @jita) == {15, 30, true}
+      assert stored(map.id, @amarr) == {215, 30, true}
+      assert [ids] = update_systems_broadcasts(flush_messages(), map.id)
+      assert Enum.sort(ids) == [@jita, @amarr]
+    end
+
+    test "update_system_position saves a single system", %{map: map} do
+      assert {:noreply, _} =
+               MapSystemsEventHandler.handle_ui_event(
+                 "update_system_position",
+                 position(@jita, 45, 60),
+                 tracked_member(map)
+               )
+
+      assert stored(map.id, @jita) == {45, 60, true}
+    end
+
+    test "update_system_position ignores a malformed position", %{map: map} do
+      assert {:noreply, _} =
+               MapSystemsEventHandler.handle_ui_event(
+                 "update_system_position",
+                 %{"solar_system_id" => "#{@jita}"},
+                 tracked_member(map)
+               )
+
+      assert stored(map.id, @jita) == {0, 0, true}
+    end
+  end
+
   describe "update_layout_settings" do
     test "saves an admin's collected positions first, then the root change", %{map: map} do
       Phoenix.PubSub.subscribe(WandererApp.PubSub, "maps:#{map.id}")
