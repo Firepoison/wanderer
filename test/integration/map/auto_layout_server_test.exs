@@ -284,6 +284,41 @@ defmodule WandererApp.Map.AutoLayoutServerTest do
     end
   end
 
+  describe "deleting the root system" do
+    setup %{map: map} do
+      options = Map.put(stored_options(map.id), "root_system_id", "#{@jita}")
+      {:ok, map_record} = MapRepo.get(map.id)
+      {:ok, _} = MapRepo.update_options(map_record, options)
+      MapServer.Impl.update_options(map.id, options)
+      flush_messages()
+      :ok
+    end
+
+    defp options_broadcasts(messages) do
+      for {:map_broadcast, _, %{event: :options_updated, payload: options}} <- messages,
+          do: options
+    end
+
+    test "clears the root, so a re-added system doesn't pull its old tree around itself", %{
+      map: map
+    } do
+      MapServer.delete_systems(map.id, [@jita], nil, nil)
+
+      assert stored(map.id, @jita) == {0, 0, false}
+      assert stored_options(map.id)["root_system_id"] == ""
+      assert {:ok, %{"root_system_id" => ""}} = WandererApp.Map.get_options(map.id)
+      assert [%{"root_system_id" => ""}] = options_broadcasts(flush_messages())
+    end
+
+    test "leaves the root alone when another system is deleted", %{map: map} do
+      MapServer.delete_systems(map.id, [@amarr], nil, nil)
+
+      assert stored(map.id, @amarr) == {200, 0, false}
+      assert stored_options(map.id)["root_system_id"] == "#{@jita}"
+      assert options_broadcasts(flush_messages()) == []
+    end
+  end
+
   describe "pushes to map clients" do
     test ":update_systems pushes the systems as one update_systems event", %{map: map} do
       {:ok, jita} = MapSystemRepo.get_by_map_and_solar_system_id(map.id, @jita)

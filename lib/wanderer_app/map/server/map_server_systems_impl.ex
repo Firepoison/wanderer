@@ -422,6 +422,7 @@ defmodule WandererApp.Map.Server.SystemsImpl do
 
           track_systems_removed(map_id, user_id, character_id, [solar_system_id])
           remove_system_connections(map_id, [solar_system_id])
+          clear_root_if_removed(map_id, solar_system_id)
 
           try do
             cleanup_linked_signatures(map_id, [solar_system_id])
@@ -461,6 +462,26 @@ defmodule WandererApp.Map.Server.SystemsImpl do
   end
 
   defp track_systems_removed(_map_id, _user_id, _character_id, _removed_solar_system_ids), do: :ok
+
+  # The root anchors auto-layout only while its system is on the map. Left set, it would pull the
+  # system's old tree around itself if the system were ever added back.
+  defp clear_root_if_removed(map_id, solar_system_id) do
+    root = "#{solar_system_id}"
+
+    with {:ok, %{"root_system_id" => ^root}} <- WandererApp.Map.get_options(map_id),
+         {:ok, map} <- WandererApp.MapRepo.get(map_id),
+         {:ok, options} <- WandererApp.MapRepo.options_to_form_data(map),
+         options = Map.put(options, "root_system_id", ""),
+         {:ok, _map} <- WandererApp.MapRepo.update_options(map, options) do
+      Impl.update_options(map_id, options)
+    else
+      {:error, error} ->
+        Logger.error("Failed to clear the removed root system: #{inspect(error)}")
+
+      _not_the_root ->
+        :ok
+    end
+  end
 
   defp remove_system_connections(map_id, solar_system_ids_to_remove) do
     connections_to_remove =
