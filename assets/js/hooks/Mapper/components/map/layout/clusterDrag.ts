@@ -77,3 +77,20 @@ export const clusterDragTargets = (drag: ClusterDrag, dragged: PositionedNode[])
 
   return targets;
 };
+
+/**
+ * The positions to save when a drag ends. Cluster members get their start positions plus their
+ * leader's total delta — exactly the transform `clusterDragTargets` applied while dragging;
+ * reading them back from React Flow's store instead would pick up the previous frame's
+ * coordinates and snap the cluster backwards. Dragged nodes outside any cluster keep where React
+ * Flow put them.
+ */
+export const clusterDropUpdates = (
+  drag: ClusterDrag,
+  dragged: PositionedNode[],
+): { solar_system_id: string; position: XYPosition }[] => {
+  const targets = clusterDragTargets(drag, dragged);
+  const updates = dragged.filter(n => !targets[n.id]).map(n => ({ solar_system_id: n.id, position: n.position }));
+  Object.entries(targets).forEach(([id, position]) => updates.push({ solar_system_id: id, position }));
+  return updates;
+};

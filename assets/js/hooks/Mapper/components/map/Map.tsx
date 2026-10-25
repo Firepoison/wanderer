@@ -40,7 +40,7 @@ import {
   useNodesState,
   useUpdateNodes,
 } from './hooks';
-import { ClusterDrag, clusterDragTargets, startClusterDrag } from './layout';
+import { ClusterDrag, clusterDragTargets, clusterDropUpdates, startClusterDrag } from './layout';
 import { useBackgroundVars } from './hooks/useBackgroundVars';
 import { MapViewport, OnMapAddSystemCallback, OnMapSelectionChange } from './map.types';
 import type { Viewport } from '@reactflow/core/dist/esm/types';
@@ -222,18 +222,20 @@ const MapComp = ({
       const drag = dragRef.current;
       dragRef.current = null;
 
-      // Cluster members get their start positions plus their leader's total delta — exactly the
-      // transform followDrag applied. Reading them back from React Flow's store instead would
-      // pick up the previous frame's coordinates and snap the cluster backwards. Dragged nodes
-      // outside any cluster keep where React Flow put them.
-      const targets = drag ? clusterDragTargets(drag, dragged) : {};
-      const updates = dragged.filter(n => !targets[n.id]).map(n => ({ solar_system_id: n.id, position: n.position }));
-      Object.entries(targets).forEach(([id, position]) => updates.push({ solar_system_id: id, position }));
+      if (!drag) {
+        // React Flow ended a drag it never reported starting. After an aborted drag, React Flow
+        // 11 keeps its drag state until a drag ends normally, so the next gesture — even a click
+        // — moves the aborted drag's nodes using where they were then. Those positions aren't
+        // the user's: save nothing, and put the nodes back where they are stored.
+        const ids = new Set(dragged.map(n => n.id));
+        setNodes(nds => nds.map(n => (ids.has(n.id) && n.data?.position ? { ...n, position: n.data.position } : n)));
+        return;
+      }
 
-      savePositions(updates);
+      savePositions(clusterDropUpdates(drag, dragged));
       endDrag();
     },
-    [savePositions, endDrag],
+    [setNodes, savePositions, endDrag],
   );
 
   // Undoes a drag React Flow abandoned, so nothing is left moved but unsaved.

@@ -1,4 +1,4 @@
-import { clusterDragTargets, startClusterDrag } from './clusterDrag';
+import { clusterDragTargets, clusterDropUpdates, startClusterDrag } from './clusterDrag';
 
 // Two clusters, {a, b, c} and {x, y}, plus a loose node z.
 const clusters: Record<string, string[]> = {
@@ -90,5 +90,39 @@ describe('clusterDragTargets', () => {
     const drag = startClusterDrag(nodes, ['a'], 'a', getCluster);
 
     expect(clusterDragTargets(drag, [])).toEqual({});
+  });
+});
+
+describe('clusterDropUpdates', () => {
+  it('saves every cluster member at its target, even a dragged one that snapped elsewhere', () => {
+    const drag = startClusterDrag(nodes, ['a', 'b'], 'a', getCluster);
+    // b snapped to a different grid point from its leader a.
+    const updates = clusterDropUpdates(drag, [
+      { id: 'a', position: { x: 15, y: 0 } },
+      { id: 'b', position: { x: 120, y: 15 } },
+    ]);
+
+    expect(updates).toEqual(
+      expect.arrayContaining([
+        { solar_system_id: 'a', position: { x: 15, y: 0 } },
+        { solar_system_id: 'b', position: { x: 115, y: 7 } },
+        { solar_system_id: 'c', position: { x: 215, y: 14 } },
+      ]),
+    );
+    expect(updates).toHaveLength(3);
+  });
+
+  it('saves a dragged node outside any cluster where React Flow put it', () => {
+    const drag = startClusterDrag(nodes, ['z', 'x'], 'z', getCluster);
+    const updates = clusterDropUpdates(drag, [
+      { id: 'z', position: { x: -20, y: -35 } },
+      { id: 'x', position: { x: 530, y: 500 } },
+    ]);
+
+    expect(updates).toEqual([
+      { solar_system_id: 'z', position: { x: -20, y: -35 } },
+      { solar_system_id: 'x', position: { x: 530, y: 500 } },
+      { solar_system_id: 'y', position: { x: 630, y: 503 } },
+    ]);
   });
 });
