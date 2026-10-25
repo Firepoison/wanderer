@@ -57,7 +57,7 @@ export const useContextMenuSystemHandlers = ({
 
     const sysInfo = systems.find(x => x.id === system)!;
 
-    emitStructureChange({ systemIds: [system] });
+    emitStructureChange({ systemIds: [system], unlocking: !!sysInfo.locked });
     outCommand({
       type: OutCommand.updateSystemLocked,
       data: {

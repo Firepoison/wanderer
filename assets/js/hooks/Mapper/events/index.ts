@@ -20,6 +20,8 @@ export interface StructureChange {
   systemIds: string[];
   /** The systems themselves are being deleted. */
   removing?: boolean;
+  /** The systems are being unlocked, so they rejoin the layout. */
+  unlocking?: boolean;
   /**
    * Receives the positions to save instead of auto-layout sending them, so the caller can put
    * them in its own command and have the save and the change succeed or fail together.
@@ -30,8 +32,10 @@ export interface StructureChange {
 /**
  * Emit right before this client sends a change that reshapes the map's graph around
  * `systemIds`. Auto-layout listens and first saves the displayed positions of the clusters
- * involved, and of their neighbours' clusters, so nothing jumps when the change lands.
- * Listeners run synchronously, so that save is sent (or collected) before the change itself.
+ * involved, and of their neighbours' clusters, so the systems that leave the layout and each
+ * cluster's anchor stay where they are drawn when the change lands; the rest of a reshaped
+ * cluster is laid out afresh around its anchor. Listeners run synchronously, so that save is
+ * sent (or collected) before the change itself.
  */
 const { useStructureChangeListener, emitStructureChange } = createEvent('structure-change')<StructureChange>();
 

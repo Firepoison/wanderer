@@ -1,6 +1,6 @@
 import { XYPosition } from 'reactflow';
 import { getConnectedComponents } from './helpers';
-import { LayoutEdgeInput, LayoutEngine, LayoutOptions } from './types';
+import { LayoutEdgeInput, LayoutEngine, LayoutInput, LayoutOptions, LayoutResult } from './types';
 
 /** Where a laid-out node sits: an offset from its cluster's anchor node. */
 export interface Placement {
@@ -36,23 +36,16 @@ export interface PlacementResult {
   clusterByNode: Map<string, string[]>;
 }
 
-/**
- * Lays out every *managed* cluster — a connected group of at least two unlocked nodes — and
- * expresses each member's position as an offset from the cluster's anchor. Positions are not an
- * input, so the result is a pure function of structure, options and root.
- *
- * Locked nodes keep their stored positions, so they and their connections are left out — except
- * a locked root. An anchor is displayed exactly at its stored position anyway, so a locked root
- * still anchors its cluster; the cluster is then `pinned`, since moving it would move the root.
- */
-export const computePlacements = async ({
-  engine,
-  nodes,
-  edges,
-  rootId,
-  options,
-  nodeSize,
-}: PlacementInput): Promise<PlacementResult> => {
+/** One cluster to lay out. */
+interface ClusterJob {
+  nodeIds: string[];
+  edges: PlacementEdge[];
+  /** The root, when the cluster contains it. */
+  rootId: string | null;
+  pinned: boolean;
+}
+
+const planClusters = ({ nodes, edges, rootId }: PlacementInput): ClusterJob[] => {
   const nodeIds = new Set<string>();
   const excluded = new Set<string>();
   let lockedRoot = false;
@@ -70,55 +63,100 @@ export const computePlacements = async ({
     e => !excluded.has(e.source) && !excluded.has(e.target) && nodeIds.has(e.source) && nodeIds.has(e.target),
   );
 
-  const components = getConnectedComponents(layoutIds, layoutEdges).filter(c => c.nodeIds.length >= 2);
-
-  const placements = new Map<string, Placement>();
-  const clusterByNode = new Map<string, string[]>();
-
-  for (const comp of components) {
-    const compRoot = rootId && comp.nodeIds.includes(rootId) ? rootId : null;
-    const pinned = compRoot !== null && lockedRoot;
-
-    const result = await engine.compute({
-      nodes: comp.nodeIds.map(id => ({ id, ...nodeSize })),
-      edges: comp.edges,
-      rootId: compRoot,
-      options,
+  return getConnectedComponents(layoutIds, layoutEdges)
+    .filter(c => c.nodeIds.length >= 2)
+    .map(c => {
+      const clusterRoot = rootId && c.nodeIds.includes(rootId) ? rootId : null;
+      return { nodeIds: c.nodeIds, edges: c.edges, rootId: clusterRoot, pinned: clusterRoot !== null && lockedRoot };
     });
+};
 
-    const anchorId = pickAnchor(comp.nodeIds, comp.edges, compRoot);
-    const origin = result.positions[anchorId];
-    if (!origin) {
-      continue;
-    }
+const layoutInput = (job: ClusterJob, { options, nodeSize }: PlacementInput): LayoutInput => ({
+  nodes: job.nodeIds.map(id => ({ id, ...nodeSize })),
+  edges: job.edges,
+  rootId: job.rootId,
+  options,
+});
 
-    comp.nodeIds.forEach(id => {
-      const p = result.positions[id];
-      if (!p) {
-        return;
-      }
-      clusterByNode.set(id, comp.nodeIds);
-      placements.set(id, {
-        anchorId,
-        offset: { x: Math.round(p.x - origin.x), y: Math.round(p.y - origin.y) },
-        pinned,
-      });
-    });
+const addPlacements = (job: ClusterJob, result: LayoutResult, into: PlacementResult) => {
+  const anchorId = pickAnchor(job.nodeIds, job.edges, job.rootId);
+  const origin = result.positions[anchorId];
+  if (!origin) {
+    return;
   }
 
-  return { placements, clusterByNode };
+  job.nodeIds.forEach(id => {
+    const p = result.positions[id];
+    if (!p) {
+      return;
+    }
+    into.clusterByNode.set(id, job.nodeIds);
+    into.placements.set(id, {
+      anchorId,
+      offset: { x: Math.round(p.x - origin.x), y: Math.round(p.y - origin.y) },
+      pinned: job.pinned,
+    });
+  });
+};
+
+/**
+ * Lays out every *managed* cluster — a connected group of at least two unlocked nodes — and
+ * expresses each member's position as an offset from the cluster's anchor. Positions are not an
+ * input, so the result is a pure function of structure, options and root.
+ *
+ * Locked nodes keep their stored positions, so they and their connections are left out — except
+ * a locked root. An anchor is displayed exactly at its stored position anyway, so a locked root
+ * still anchors its cluster; the cluster is then `pinned`, since moving it would move the root.
+ */
+export const computePlacements = async (input: PlacementInput): Promise<PlacementResult> => {
+  const result: PlacementResult = { placements: new Map(), clusterByNode: new Map() };
+  for (const job of planClusters(input)) {
+    addPlacements(job, await input.engine.compute(layoutInput(job, input)), result);
+  }
+  return result;
+};
+
+/**
+ * `computePlacements` without waiting, for callers that must act before anything else runs: the
+ * placements when the engine computes synchronously (as dagre does), or null for an engine that
+ * returns a promise.
+ */
+export const computePlacementsNow = (input: PlacementInput): PlacementResult | null => {
+  const result: PlacementResult = { placements: new Map(), clusterByNode: new Map() };
+  for (const job of planClusters(input)) {
+    const computed = input.engine.compute(layoutInput(job, input));
+    if (computed instanceof Promise) {
+      return null;
+    }
+    addPlacements(job, computed, result);
+  }
+  return result;
 };
 
 const edgeKey = (e: LayoutEdgeInput) => `${e.source}|${e.target}`;
 
+/** Orders connections oldest first; ties and unknown times are broken by source/target id. */
+export const compareEdgeAge = (a: PlacementEdge, b: PlacementEdge): number => {
+  if (a.createdAt !== b.createdAt) {
+    return a.createdAt < b.createdAt ? -1 : 1;
+  }
+  const ka = edgeKey(a);
+  const kb = edgeKey(b);
+  return ka < kb ? -1 : ka > kb ? 1 : 0;
+};
+
 /**
  * The node a cluster is pinned to: the root when the cluster contains it, otherwise the source of
- * the cluster's oldest connection (ties and unknown times broken by source/target id).
+ * the cluster's oldest connection.
  *
- * Connections are deleted, never hidden, so a system that joins a cluster — a new one, or one
- * re-added or unlocked after being mapped long ago — always joins through a connection newer than
- * the cluster's own. Its arrival therefore never moves the cluster, and when two clusters merge,
- * the one with the older connection stays put while the other attaches to it.
+ * Connections are deleted, never hidden from the server, so a system that is added to the map —
+ * a new one, or one re-added after being mapped long ago — always joins through a connection
+ * newer than the cluster's own, and its arrival never moves the cluster. When two clusters
+ * merge, the one with the older connection stays put while the other attaches to it.
+ *
+ * Unlocking is the exception: a lock hides the system's connections from the layout, so the
+ * system can return holding the cluster's oldest connection and become its anchor. The client
+ * that unlocks it moves the system first so the cluster stays put (`unlockAnchorUpdates`).
  */
 export const pickAnchor = (nodeIds: string[], edges: PlacementEdge[], rootId: string | null): string => {
   if (rootId && nodeIds.includes(rootId)) {
@@ -127,11 +165,7 @@ export const pickAnchor = (nodeIds: string[], edges: PlacementEdge[], rootId: st
 
   let oldest: PlacementEdge | undefined;
   for (const e of edges) {
-    if (
-      !oldest ||
-      e.createdAt < oldest.createdAt ||
-      (e.createdAt === oldest.createdAt && edgeKey(e) < edgeKey(oldest))
-    ) {
+    if (!oldest || compareEdgeAge(e, oldest) < 0) {
       oldest = e;
     }
   }

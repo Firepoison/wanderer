@@ -5,8 +5,9 @@
  */
 import { XYPosition } from 'reactflow';
 import { computePlacements, Placement, PlacementEdge, ReconcileState, reconcileNodes } from './anchoring';
-import { clusterDragTargets, startClusterDrag } from './clusterDrag';
+import { clusterDropUpdates, startClusterDrag } from './clusterDrag';
 import { dagreEngine } from './engines/dagreEngine';
+import { displayedUpdates, preSaveUpdates, structureChangeIds, unlockPreSave } from './orchestration';
 
 type SystemSpec = { id: string; stored: XYPosition; locked?: boolean };
 type ClientNode = {
@@ -36,6 +37,8 @@ class Client {
   placements = new Map<string, Placement>();
   state: ReconcileState = { placed: new Set(), pinned: new Set() };
   cluster = new Map<string, string[]>();
+  rootId: string | null = null;
+  options: Record<string, string> = {};
 
   constructor(systems: SystemSpec[]) {
     systems.forEach(s => this.add(s));
@@ -67,6 +70,8 @@ class Client {
   /** The layout pass followed by the reconcile pass; returns how many nodes reconcile changed. */
   async layout(edges: PlacementEdge[], rootId: string | null, options: Record<string, string> = {}, enabled = true) {
     this.edges = edges;
+    this.rootId = rootId;
+    this.options = options;
     if (enabled) {
       const result = await computePlacements({
         engine: dagreEngine,
@@ -128,7 +133,7 @@ class Client {
 
   /**
    * A drag in Map.tsx: startClusterDrag, React Flow moving each dragged node (snapped to the grid
-   * when `snapToGrid`), clusterDragTargets on drop, then savePositions and the deferred reconcile.
+   * when `snapToGrid`), clusterDropUpdates on drop, then savePositions and the deferred reconcile.
    */
   drag(grabbed: string[], delta: XYPosition, { snapToGrid = false } = {}) {
     grabbed.forEach(id => expect(this.node(id).draggable).toBe(true));
@@ -138,42 +143,33 @@ class Client {
       const moved = { x: p.x + delta.x, y: p.y + delta.y };
       return { id, position: snapToGrid ? snap(moved) : moved };
     });
-    const targets = clusterDragTargets(drag, dragged);
-    const updates = [
-      ...dragged.filter(n => !targets[n.id]).map(n => ({ solar_system_id: n.id, position: n.position })),
-      ...Object.entries(targets).map(([id, position]) => ({ solar_system_id: id, position })),
-    ];
+    const updates = clusterDropUpdates(drag, dragged);
     this.recordStored(updates);
     return { updates, snapBack: this.reconcile() };
   }
 
   /** useAutoLayout's structure-change listener: the systems' clusters and their neighbours'. */
-  saveAround(systemIds: string[], removing = false) {
-    const changing = new Set(systemIds);
-    const touched = new Set(systemIds);
-    this.edges.forEach(e => {
-      if (changing.has(e.source)) touched.add(e.target);
-      if (changing.has(e.target)) touched.add(e.source);
-    });
-    const ids = new Set<string>();
-    touched.forEach(id => this.cluster.get(id)?.forEach(m => ids.add(m)));
-    if (removing) systemIds.forEach(id => ids.delete(id));
-    const updates = this.displayedUpdates(ids);
+  saveAround(systemIds: string[], { removing = false, unlocking = false } = {}) {
+    const ids = structureChangeIds({ systemIds, removing, edges: this.edges, clusterByNode: this.cluster });
+    const anchors = unlocking
+      ? unlockPreSave({
+          unlocking: systemIds,
+          nodes: this.nodes.map(n => ({ id: n.id, position: n.position, locked: n.data.locked })),
+          edges: this.edges,
+          before: this.placements,
+          layout: { engine: dagreEngine, rootId: this.rootId, options: this.options, nodeSize: SIZE },
+        })
+      : [];
+    const updates = preSaveUpdates(displayedUpdates(this.nodes, ids), anchors);
     this.serverApplies(updates);
     return updates;
   }
 
   /** As saveLayout: every placed node whose displayed position differs from its stored one. */
   saveLayout() {
-    const updates = this.displayedUpdates(this.state.placed);
+    const updates = displayedUpdates(this.nodes, this.state.placed);
     this.serverApplies(updates);
     return updates;
-  }
-
-  displayedUpdates(ids: Set<string>): PositionUpdate[] {
-    return this.nodes
-      .filter(n => ids.has(n.id) && (n.data.position.x !== n.position.x || n.data.position.y !== n.position.y))
-      .map(n => ({ solar_system_id: n.id, position: n.position }));
   }
 
   storedVsDrawn() {
@@ -470,6 +466,7 @@ describe('saving the layout', () => {
 const structuralChange = async ({
   ids,
   removing = false,
+  unlocking = false,
   change,
   watch,
   setup = async c => {
@@ -478,6 +475,7 @@ const structuralChange = async ({
 }: {
   ids: string[];
   removing?: boolean;
+  unlocking?: boolean;
   change: (c: Client) => PlacementEdge[];
   watch: string[];
   setup?: (c: Client) => Promise<void>;
@@ -488,7 +486,7 @@ const structuralChange = async ({
     await setup(c);
     const before = c.snapshot();
 
-    if (preSave) c.saveAround(ids, removing);
+    if (preSave) c.saveAround(ids, { removing, unlocking });
     await c.layout(change(c), null);
 
     const jumped = watch.filter(id => c.pos(id).x !== before[id].x || c.pos(id).y !== before[id].y);
@@ -524,7 +522,7 @@ describe('saving before a structural change', () => {
   it('keeps the rest of the tree in place when a system is deleted, without saving the deleted one', async () => {
     const c = new Client(base());
     await c.layout(baseEdges, null);
-    expect(c.saveAround(['A'], true).map(u => u.solar_system_id)).not.toContain('A');
+    expect(c.saveAround(['A'], { removing: true }).map(u => u.solar_system_id)).not.toContain('A');
 
     await structuralChange({
       ids: ['A'],
@@ -537,6 +535,37 @@ describe('saving before a structural change', () => {
     });
   });
 
+  it('keeps a chain in place when its locked home, holding its oldest connection, is unlocked', async () => {
+    // The chain was mapped out of H, and dragged away from it while H was locked.
+    const chain: PlacementEdge[] = [
+      { source: 'H', target: 'A', createdAt: 1 },
+      { source: 'A', target: 'B', createdAt: 2 },
+      { source: 'B', target: 'C', createdAt: 3 },
+    ];
+    for (const preSave of [false, true]) {
+      server = new Map();
+      const c = new Client([sys('H', 0, 0, true), sys('A', 180, 0), sys('B', 360, 0), sys('C', 540, 0)]);
+      await c.layout(chain, null);
+      c.serverApplies(c.drag(['B'], { x: 300, y: 400 }).updates);
+      const before = c.snapshot();
+
+      if (preSave) c.saveAround(['H'], { unlocking: true });
+      c.echo('H', server.get('H')!, false);
+      await c.layout(chain, null);
+      expect(c.placements.get('A')?.anchorId).toBe('H');
+
+      const jumped = ['A', 'B', 'C'].filter(id => c.pos(id).x !== before[id].x || c.pos(id).y !== before[id].y);
+      if (!preSave) {
+        expect(jumped).toEqual(['A', 'B', 'C']);
+        continue;
+      }
+      expect(jumped).toEqual([]);
+      const fresh = freshClient(c);
+      await fresh.layout(chain, null);
+      ['H', 'A', 'B', 'C'].forEach(id => expect(fresh.pos(id)).toEqual(c.pos(id)));
+    }
+  });
+
   it("saves an unlocked system's neighbouring clusters, and the older tree keeps its anchor", async () => {
     const bridged: PlacementEdge[] = [
       ...baseEdges,
@@ -547,7 +576,7 @@ describe('saving before a structural change', () => {
     const c = new Client([...base(), sys('Q', 1500, 900), sys('P', 1700, 900), sys('L', 1200, 400, true)]);
     await c.layout(bridged, null);
 
-    const saved = c.saveAround(['L']).map(u => u.solar_system_id);
+    const saved = c.saveAround(['L'], { unlocking: true }).map(u => u.solar_system_id);
     expect(saved).toEqual(expect.arrayContaining(['A', 'P']));
 
     c.echo('L', c.pos('L'), false);

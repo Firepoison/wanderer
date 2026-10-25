@@ -54,7 +54,7 @@ describe('useContextMenuSystemHandlers', () => {
 
       act(() => result.current.onLockToggle());
 
-      expect(changes).toEqual([{ systemIds: ['1'] }]);
+      expect(changes).toEqual([{ systemIds: ['1'], unlocking: false }]);
       expect(outCommandMock).toHaveBeenCalledWith({
         type: OutCommand.updateSystemLocked,
         data: { system_id: '1', value: true },
@@ -62,17 +62,18 @@ describe('useContextMenuSystemHandlers', () => {
       expect(calls).toEqual(['structure-change', `command:${OutCommand.updateSystemLocked}`]);
     });
 
-    it('announces it before unlocking too, so the clusters it joins are saved', () => {
+    it('announces an unlock before sending it, flagged as one, so the clusters it joins stay put', () => {
       const changes = listen();
       const { result } = openOn('2');
 
       act(() => result.current.onLockToggle());
 
-      expect(changes).toEqual([{ systemIds: ['2'] }]);
+      expect(changes).toEqual([{ systemIds: ['2'], unlocking: true }]);
       expect(outCommandMock).toHaveBeenCalledWith({
         type: OutCommand.updateSystemLocked,
         data: { system_id: '2', value: false },
       });
+      expect(calls).toEqual(['structure-change', `command:${OutCommand.updateSystemLocked}`]);
     });
   });
 

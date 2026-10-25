@@ -1,6 +1,8 @@
 import { XYPosition } from 'reactflow';
 import {
+  compareEdgeAge,
   computePlacements,
+  computePlacementsNow,
   EMPTY_RECONCILE_STATE,
   pickAnchor,
   Placement,
@@ -178,6 +180,38 @@ describe('computePlacements', () => {
 
     expect([...placements.keys()].sort()).toEqual(['a', 'b']);
     expect(clusterByNode.has('c')).toBe(false);
+  });
+});
+
+describe('computePlacementsNow', () => {
+  const input = (engine: LayoutEngine): PlacementInput => ({
+    engine,
+    nodes: [...unlocked('a', 'b', 'c'), { id: 'l', locked: true }],
+    edges: [edge('a', 'b', 2), edge('b', 'c', 1), edge('c', 'l', 0)],
+    rootId: null,
+    options: {},
+    nodeSize: { width: 142, height: 37 },
+  });
+
+  it('gives the same placements as computePlacements, without waiting, for a synchronous engine', async () => {
+    const now = computePlacementsNow(input(lineEngine()));
+
+    expect(now).toEqual(await computePlacements(input(lineEngine())));
+    expect(now!.placements.get('a')).toEqual({ anchorId: 'b', offset: { x: -100, y: 0 }, pinned: false });
+  });
+
+  it('gives up on an engine that computes asynchronously', () => {
+    const engine = lineEngine();
+
+    expect(computePlacementsNow(input({ ...engine, compute: async i => engine.compute(i) }))).toBeNull();
+  });
+});
+
+describe('compareEdgeAge', () => {
+  it('orders connections oldest first, then by source/target id, unknown times last', () => {
+    const edges = [edge('b', 'c', 5), edge('x', 'y', Infinity), edge('a', 'z', 5), edge('q', 'r', 1)];
+
+    expect([...edges].sort(compareEdgeAge).map(e => `${e.source}${e.target}`)).toEqual(['qr', 'az', 'bc', 'xy']);
   });
 });
 

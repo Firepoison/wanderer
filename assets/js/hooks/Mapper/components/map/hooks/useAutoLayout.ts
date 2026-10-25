@@ -13,11 +13,14 @@ import {
   getLayoutEngine,
   layoutSignature,
   Placement,
+  PlacementEdge,
+  preSaveUpdates,
   readEngineOptions,
   ReconcileState,
   reconcileNodes,
   serializeOptions,
   structureChangeIds,
+  unlockPreSave,
 } from '@/hooks/Mapper/components/map/layout';
 
 // Every client lays out with the same nominal node size, so they all compute identical offsets
@@ -26,6 +29,9 @@ import {
 const LAYOUT_NODE_SIZE = { width: 142, height: 37 };
 
 const NO_PLACEMENTS: Map<string, Placement> = new Map();
+
+const placementEdges = (edges: Edge<SolarSystemConnection>[]): PlacementEdge[] =>
+  edges.map(e => ({ source: e.source, target: e.target, createdAt: connectionCreatedAt(e.data?.inserted_at) }));
 
 interface UseAutoLayoutProps {
   nodes: Node<SolarSystemRawType>[];
@@ -120,6 +126,11 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
   edgesRef.current = edges;
 
   const [placements, setPlacements] = useState<Map<string, Placement>>(NO_PLACEMENTS);
+  const placementsRef = useRef(placements);
+  placementsRef.current = placements;
+  // What the structure-change listener needs to lay out the map as a change will leave it.
+  const layoutRef = useRef({ enabled, engine, options, rootId });
+  layoutRef.current = { enabled, engine, options, rootId };
   // What the last reconcile placed and pinned, so the next one knows which nodes just left.
   const reconcileRef = useRef<ReconcileState>(EMPTY_RECONCILE_STATE);
 
@@ -188,15 +199,34 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
   // A change this client is about to send will reshape these clusters: a locked or disconnected
   // node leaves the layout for its stored position, and a cluster that gains, loses or changes
   // its anchor is re-placed from the new anchor's stored position. Saving what is displayed
-  // first makes those the positions everyone already sees, so nothing jumps.
-  useStructureChangeListener(({ systemIds, removing, collect }) => {
+  // first keeps every locked or disconnected system, and every anchor, where everyone already
+  // sees it. The rest of a reshaped cluster is laid out afresh around its anchor, so it can move.
+  //
+  // An unlocked system can become the anchor of the cluster it joins, which its own stored
+  // position would then move; the system is moved instead (`unlockPreSave`).
+  const unlockUpdates = useCallback((systemIds: string[]) => {
+    const { enabled, engine, options, rootId } = layoutRef.current;
+    if (!enabled) {
+      return [];
+    }
+
+    return unlockPreSave({
+      unlocking: systemIds,
+      nodes: nodesRef.current.map(n => ({ id: n.id, position: n.position, locked: !!n.data?.locked })),
+      edges: placementEdges(edgesRef.current),
+      before: placementsRef.current,
+      layout: { engine, options, rootId, nodeSize: LAYOUT_NODE_SIZE },
+    });
+  }, []);
+
+  useStructureChangeListener(({ systemIds, removing, unlocking, collect }) => {
     const ids = structureChangeIds({
       systemIds,
       removing,
       edges: edgesRef.current,
       clusterByNode: clusterByNodeRef.current,
     });
-    const updates = displayedUpdates(nodesRef.current, ids);
+    const updates = preSaveUpdates(displayedUpdates(nodesRef.current, ids), unlocking ? unlockUpdates(systemIds) : []);
     recordStored(updates);
     if (collect) {
       collect(updates);
@@ -236,11 +266,7 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
       const result = await computePlacements({
         engine,
         nodes: nodes.map(n => ({ id: n.id, locked: !!n.data?.locked })),
-        edges: edges.map(e => ({
-          source: e.source,
-          target: e.target,
-          createdAt: connectionCreatedAt(e.data?.inserted_at),
-        })),
+        edges: placementEdges(edges),
         rootId,
         options,
         nodeSize: LAYOUT_NODE_SIZE,

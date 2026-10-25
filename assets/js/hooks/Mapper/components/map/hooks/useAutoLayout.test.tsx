@@ -286,6 +286,38 @@ describe('useAutoLayout', () => {
       expect(ids()).toEqual(['a', 'p']);
     });
 
+    it('moves an unlocked system that becomes the anchor, so the cluster it joins stays put', async () => {
+      setOptions({ auto_layout_enabled: 'true', auto_layout_engine: 'dagre', root_system_id: '' });
+      // Home h, locked after the chain was mapped out of it: h -> a is the oldest connection.
+      const nodes = [node('h', 0, 0, true), node('a', 180, 0), node('b', 360, 0), node('c', 540, 0)];
+      const edges = [
+        edge('h', 'a', '2026-01-01T00:00:01Z'),
+        edge('a', 'b', '2026-01-01T00:00:02Z'),
+        edge('b', 'c', '2026-01-01T00:00:03Z'),
+      ];
+      const { result, onCommand, pos, stored } = renderLayout(nodes, edges);
+      await waitFor(() => expect(result.current.getCluster('a')).toBeDefined());
+      const drawn = Object.fromEntries(['a', 'b', 'c'].map(id => [id, pos(id)]));
+
+      // Re-anchored on h where it is stored now, the chain would move.
+      const unlocked = nodes.map(n => (n.id === 'h' ? node('h', 0, 0) : n));
+      expect((await expectedPositions(unlocked, edges, null)).a).not.toEqual(drawn.a);
+
+      act(() => emitStructureChange({ systemIds: ['h'], unlocking: true }));
+      const sent = lastCommand(onCommand).data as SentUpdate[];
+      expect(sent.find(u => u.solar_system_id === 'h')?.position).toEqual(stored('h'));
+
+      // The server's echo of the unlock.
+      act(() =>
+        result.current.setNodes(nds =>
+          nds.map(n => (n.id === 'h' ? { ...n, draggable: true, data: { ...n.data, locked: false } } : n)),
+        ),
+      );
+      await waitFor(() => expect(result.current.getCluster('h')).toBeDefined());
+
+      ['a', 'b', 'c'].forEach(id => expect(pos(id)).toEqual(drawn[id]));
+    });
+
     it('sends nothing when nothing differs', async () => {
       const { result, onCommand } = renderLayout();
       await waitFor(() => expect(result.current.getCluster('b')).toBeDefined());

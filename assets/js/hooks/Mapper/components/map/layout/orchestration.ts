@@ -1,4 +1,5 @@
 import { XYPosition } from 'reactflow';
+import { compareEdgeAge, computePlacementsNow, Placement, PlacementEdge, PlacementInput } from './anchoring';
 import { LayoutOptions } from './types';
 
 /**
@@ -139,6 +140,110 @@ export interface DisplayedUpdate {
   solar_system_id: string;
   position: XYPosition;
 }
+
+/**
+ * Unlocking a system can make it its cluster's anchor (see `pickAnchor`), and the cluster would
+ * then be re-placed from the system's own stored position. For each cluster the unlock gives a
+ * new anchor that wasn't laid out before, this returns a stored position for that anchor which
+ * keeps the absorbed cluster with the oldest connection where it is displayed. The unlocked
+ * system moves to where the layout puts it next to that cluster instead.
+ *
+ * `before` is the layout on screen, `after` the layout once `unlocking` are unlocked.
+ */
+export const unlockAnchorUpdates = ({
+  unlocking,
+  before,
+  after,
+  displayed,
+  edges,
+}: {
+  unlocking: string[];
+  before: Map<string, Placement>;
+  after: Map<string, Placement>;
+  displayed: Map<string, XYPosition>;
+  edges: PlacementEdge[];
+}): DisplayedUpdate[] => {
+  const oldestFirst = [...edges].sort(compareEdgeAge);
+  const updates: DisplayedUpdate[] = [];
+
+  new Set(unlocking.map(id => after.get(id)?.anchorId)).forEach(anchorId => {
+    // An anchor that was already laid out is saved where it is displayed, so its cluster stays.
+    if (!anchorId || before.has(anchorId)) {
+      return;
+    }
+
+    const absorbed = new Set<string>();
+    after.forEach((p, id) => {
+      const was = before.get(id);
+      if (p.anchorId === anchorId && was) {
+        absorbed.add(was.anchorId);
+      }
+    });
+
+    // The absorbed cluster with the oldest connection stays, as in any merge. A cluster is
+    // named by its anchor.
+    const clusterOf = (id: string) => before.get(id)?.anchorId;
+    const oldest = oldestFirst.find(e => {
+      const cluster = clusterOf(e.source);
+      return cluster !== undefined && cluster === clusterOf(e.target) && absorbed.has(cluster);
+    });
+    const kept = (oldest && clusterOf(oldest.source)) ?? [...absorbed][0];
+    if (kept === undefined) {
+      return;
+    }
+
+    const keptAt = displayed.get(kept);
+    const offset = after.get(kept)?.offset;
+    if (keptAt && offset) {
+      updates.push({ solar_system_id: anchorId, position: { x: keptAt.x - offset.x, y: keptAt.y - offset.y } });
+    }
+  });
+
+  return updates;
+};
+
+/**
+ * `unlockAnchorUpdates` for the map as it is now, laid out as the unlock will leave it. That
+ * layout is needed before the unlock is sent, so an engine that computes asynchronously gets no
+ * updates, and the cluster moves after all.
+ */
+export const unlockPreSave = ({
+  unlocking,
+  nodes,
+  edges,
+  before,
+  layout,
+}: {
+  unlocking: string[];
+  nodes: { id: string; position: XYPosition; locked: boolean }[];
+  edges: PlacementEdge[];
+  before: Map<string, Placement>;
+  layout: Omit<PlacementInput, 'nodes' | 'edges'>;
+}): DisplayedUpdate[] => {
+  const unlockingIds = new Set(unlocking);
+  const after = computePlacementsNow({
+    ...layout,
+    nodes: nodes.map(n => ({ id: n.id, locked: n.locked && !unlockingIds.has(n.id) })),
+    edges,
+  });
+  if (!after) {
+    return [];
+  }
+
+  return unlockAnchorUpdates({
+    unlocking,
+    before,
+    after: after.placements,
+    displayed: new Map(nodes.map(n => [n.id, n.position])),
+    edges,
+  });
+};
+
+/** What to save before a structure change: `displayed`, with any anchor an unlock moves in its place. */
+export const preSaveUpdates = (displayed: DisplayedUpdate[], anchors: DisplayedUpdate[]): DisplayedUpdate[] => {
+  const moved = new Set(anchors.map(u => u.solar_system_id));
+  return [...displayed.filter(u => !moved.has(u.solar_system_id)), ...anchors];
+};
 
 /** The displayed position of each of `ids` whose stored position differs from it. */
 export const displayedUpdates = (
