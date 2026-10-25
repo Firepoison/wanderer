@@ -244,9 +244,11 @@ defmodule WandererApp.Map.SlugRecoveryTest do
     # Convert UUID string to binary format for PostgreSQL
     owner_id_binary = Ecto.UUID.dump!(owner_id)
 
+    # scopes is set explicitly: the column's default is the char codes of '{wormholes}', which
+    # Ash can't load, and Ash's own inserts always set it.
     query = """
-    INSERT INTO maps_v1 (id, slug, name, owner_id, deleted, scope, inserted_at, updated_at)
-    VALUES (gen_random_uuid(), $1, $2, $3, $4, 'wormholes', NOW(), NOW())
+    INSERT INTO maps_v1 (id, slug, name, owner_id, deleted, scope, scopes, inserted_at, updated_at)
+    VALUES (gen_random_uuid(), $1, $2, $3, $4, 'wormholes', '{wormholes}', NOW(), NOW())
     RETURNING id
     """
 

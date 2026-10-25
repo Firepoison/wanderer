@@ -153,6 +153,10 @@ defmodule WandererApp.Map.Operations.Duplication do
       :updated_at,
       :map_id,
       :map,
+      # Who locked the connection and when; the copy keeps only the locked flag
+      :locked_at,
+      :locked_by_id,
+      :locked_by,
       # Ash/Ecto metadata fields
       :__meta__,
       :__lateral_join_source__,

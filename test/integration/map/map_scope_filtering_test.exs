@@ -25,6 +25,8 @@ defmodule WandererApp.Map.MapScopeFilteringTest do
 
   use WandererApp.DataCase
 
+  import WandererApp.MapTestHelpers, only: [setup_system_static_info_cache: 1]
+
   # System class constants (matching ConnectionsImpl)
   @c1 1
   @c2 2
@@ -185,11 +187,7 @@ defmodule WandererApp.Map.MapScopeFilteringTest do
       }
     }
 
-    Enum.each(test_systems, fn {solar_system_id, system_info} ->
-      Cachex.put(:system_static_info_cache, solar_system_id, system_info)
-    end)
-
-    :ok
+    setup_system_static_info_cache(test_systems)
   end
 
   # Setup known stargates between adjacent k-space systems
@@ -212,6 +210,11 @@ defmodule WandererApp.Map.MapScopeFilteringTest do
       from_solar_system_id: @hs_system_halenan,
       to_solar_system_id: @ls_system_halmah
     })
+
+    # These stargates exist only for this test; MapScopesTest uses the same systems without them.
+    on_exit(fn ->
+      Enum.each([halenan_mili_key, halenan_halmah_key], &WandererApp.Cache.delete/1)
+    end)
 
     :ok
   end

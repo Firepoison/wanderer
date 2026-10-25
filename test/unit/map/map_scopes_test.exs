@@ -6,6 +6,8 @@ defmodule WandererApp.Map.Server.MapScopesTest do
   """
   use WandererApp.DataCase
 
+  import WandererApp.MapTestHelpers, only: [setup_system_static_info_cache: 1]
+
   alias WandererApp.Map.Server.ConnectionsImpl
 
   # System class constants (matching the impl)
@@ -66,11 +68,7 @@ defmodule WandererApp.Map.Server.MapScopesTest do
       30_000_142 => %{solar_system_id: 30_000_142, system_class: @hs}
     }
 
-    Enum.each(test_systems, fn {solar_system_id, system_info} ->
-      Cachex.put(:system_static_info_cache, solar_system_id, system_info)
-    end)
-
-    :ok
+    setup_system_static_info_cache(test_systems)
   end
 
   describe "can_add_location/2 with array scopes" do
