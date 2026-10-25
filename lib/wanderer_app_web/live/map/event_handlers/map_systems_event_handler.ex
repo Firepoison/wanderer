@@ -380,18 +380,41 @@ defmodule WandererAppWeb.MapSystemsEventHandler do
     update_system_positions(map_id, rest)
   end
 
-  defp update_system_position(map_id, %{
-         "position" => %{"x" => x, "y" => y},
-         "solar_system_id" => solar_system_id
-       })
-       when not is_nil(x) and not is_nil(y) and not is_nil(solar_system_id),
-       do:
-         map_id
-         |> WandererApp.Map.Server.update_system_position(%{
-           solar_system_id: solar_system_id |> String.to_integer(),
-           position_x: x,
-           position_y: y
-         })
+  defp update_system_positions(_map_id, _positions), do: :ok
 
-  defp update_system_position(_map_id, _position), do: :ok
+  defp update_system_position(map_id, position) do
+    case parse_system_position(position) do
+      {:ok, update} -> WandererApp.Map.Server.update_system_position(map_id, update)
+      :error -> :ok
+    end
+  end
+
+  @doc """
+  Parses one position a map client sent: the solar system id as an integer or a string of
+  digits, and the position as numbers, rounded to whole pixels. Returns `:error` for anything
+  else, so a malformed entry is dropped instead of crashing the LiveView or reaching the map.
+  """
+  def parse_system_position(%{"position" => %{"x" => x, "y" => y}, "solar_system_id" => id})
+      when is_number(x) and is_number(y) do
+    case parse_solar_system_id(id) do
+      {:ok, solar_system_id} ->
+        {:ok, %{solar_system_id: solar_system_id, position_x: round(x), position_y: round(y)}}
+
+      :error ->
+        :error
+    end
+  end
+
+  def parse_system_position(_position), do: :error
+
+  defp parse_solar_system_id(id) when is_integer(id), do: {:ok, id}
+
+  defp parse_solar_system_id(id) when is_binary(id) do
+    case Integer.parse(id) do
+      {solar_system_id, ""} -> {:ok, solar_system_id}
+      _ -> :error
+    end
+  end
+
+  defp parse_solar_system_id(_id), do: :error
 end

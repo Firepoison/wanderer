@@ -1069,18 +1069,24 @@ defmodule WandererApp.Map.Server.SystemsImpl do
          update,
          callback_fn \\ nil
        ) do
-    with :ok <- WandererApp.Map.update_system_by_solar_system_id(map_id, update),
-         {:ok, system} <-
+    with {:ok, system} <-
            WandererApp.MapSystemRepo.get_by_map_and_solar_system_id(
              map_id,
              update.solar_system_id
            ),
-         {:ok, update_map} <- Impl.get_update_map(update, attributes) do
-      {:ok, updated_system} =
-        apply(WandererApp.MapSystemRepo, update_method, [
-          system,
-          update_map
-        ])
+         {:ok, update_map} <- Impl.get_update_map(update, attributes),
+         {:ok, updated_system} <-
+           apply(WandererApp.MapSystemRepo, update_method, [
+             system,
+             update_map
+           ]) do
+      # The in-memory map takes the values the database stored, and only once it has stored them,
+      # so a value the database rejects never reaches clients or the map server's calculations.
+      :ok =
+        WandererApp.Map.update_system_by_solar_system_id(
+          map_id,
+          Map.take(updated_system, [:solar_system_id | attributes])
+        )
 
       if not is_nil(callback_fn) do
         callback_fn.(updated_system)
