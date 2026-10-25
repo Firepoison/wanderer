@@ -96,7 +96,7 @@ const expectedPositions = async (nodes: MapNode[], edges: MapEdge[], rootId: str
     edges: edges.map(e => ({ source: e.source, target: e.target, createdAt: Date.parse(e.data!.inserted_at!) })),
     rootId,
     options,
-    nodeSize: { width: 142, height: 37 },
+    nodeSize: { width: 142, height: 40 },
   });
   const storedById = new Map(nodes.map(n => [n.id, n.data.position]));
   const out: Record<string, XYPosition> = {};

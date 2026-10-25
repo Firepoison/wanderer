@@ -24,9 +24,10 @@ import {
 } from '@/hooks/Mapper/components/map/layout';
 
 // Every client lays out with the same nominal node size, so they all compute identical offsets
-// whatever theme each one uses. It is the largest theme's node (accessible-large-theme.scss), so
-// no theme's nodes overlap.
-const LAYOUT_NODE_SIZE = { width: 142, height: 37 };
+// whatever theme each one uses. It is as wide as the widest theme's node
+// (accessible-large-theme.scss) and as tall as the tallest (focus-theme.scss), so no theme's nodes
+// overlap.
+const LAYOUT_NODE_SIZE = { width: 142, height: 40 };
 
 const NO_PLACEMENTS: Map<string, Placement> = new Map();
 

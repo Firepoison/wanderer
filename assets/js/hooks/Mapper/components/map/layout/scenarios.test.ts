@@ -18,7 +18,7 @@ type ClientNode = {
 };
 type PositionUpdate = { solar_system_id: string; position: XYPosition };
 
-const SIZE = { width: 142, height: 37 };
+const SIZE = { width: 142, height: 40 };
 
 // React Flow's snapToGrid: each dragged node's position is rounded to the 15px grid on its own.
 const snap = (p: XYPosition): XYPosition => ({ x: 15 * Math.round(p.x / 15), y: 15 * Math.round(p.y / 15) });
