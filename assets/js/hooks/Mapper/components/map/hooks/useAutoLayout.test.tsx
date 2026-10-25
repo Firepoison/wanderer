@@ -371,6 +371,27 @@ describe('useAutoLayout', () => {
       expect(pos('c')).toEqual({ x: 200, y: 0 });
     });
 
+    it('discards a slow result once the structure is back to the one on screen', async () => {
+      const pending: (() => void)[] = [];
+      mockTestEngine.compute.mockImplementation(
+        input => new Promise(resolve => pending.push(() => resolve(line(input)))),
+      );
+      const edges = [edge('a', 'b', '2026-01-01T00:00:01Z'), edge('b', 'c', '2026-01-01T00:00:02Z')];
+      const { result } = renderLayout([node('a', 0, 0), node('b', 500, 500)], edges);
+      await waitFor(() => expect(pending).toHaveLength(1));
+      await act(async () => pending[0]());
+      await waitFor(() => expect(result.current.getCluster('a')).toEqual(['a', 'b']));
+
+      // c arrives and leaves again while its layout is still running.
+      act(() => result.current.setNodes(nds => [...nds, node('c', 900, 900)]));
+      await waitFor(() => expect(pending).toHaveLength(2));
+      act(() => result.current.setNodes(nds => nds.filter(n => n.id !== 'c')));
+      await act(async () => pending[1]());
+
+      expect(result.current.getCluster('a')).toEqual(['a', 'b']);
+      expect(pending).toHaveLength(2);
+    });
+
     it('logs an engine error and retries on the next structural change', async () => {
       const error = jest.spyOn(console, 'error').mockImplementation(() => undefined);
       mockTestEngine.compute.mockImplementationOnce(() => {

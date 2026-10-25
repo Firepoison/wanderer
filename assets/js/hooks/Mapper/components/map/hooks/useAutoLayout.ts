@@ -221,6 +221,12 @@ export const useAutoLayout = ({ nodes, edges, setNodes, onCommand }: UseAutoLayo
     // Positions aren't part of the signature, so this early-returns during drags/position
     // syncs and only recomputes the (expensive) layout on real structural changes.
     if (signature === lastSigRef.current || signature === inFlightSigRef.current) {
+      // Back to the structure on screen while another is still being laid out: that run's
+      // result would be for a structure that is gone, so drop it.
+      if (signature === lastSigRef.current && inFlightSigRef.current !== null) {
+        runIdRef.current++;
+        inFlightSigRef.current = null;
+      }
       return;
     }
     inFlightSigRef.current = signature;
