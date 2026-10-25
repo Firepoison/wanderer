@@ -13,6 +13,8 @@ export interface ContextMenuRootProps {
   pasteSystemsAndConnections: PasteSystemsAndConnections | undefined;
   onAddSystem(): void;
   onPasteSystemsAnsConnections(): void;
+  /** Shown only when set: saves the auto-layout's displayed positions as the stored ones. */
+  onSaveLayout?(): void;
 }
 
 export const ContextMenuRoot: React.FC<ContextMenuRootProps> = ({
@@ -20,6 +22,7 @@ export const ContextMenuRoot: React.FC<ContextMenuRootProps> = ({
   onAddSystem,
   onPasteSystemsAnsConnections,
   pasteSystemsAndConnections,
+  onSaveLayout,
 }) => {
   const {
     data: { options, userPermissions },
@@ -64,8 +67,17 @@ export const ContextMenuRoot: React.FC<ContextMenuRootProps> = ({
             },
           ]
         : []),
+      ...(onSaveLayout != null
+        ? [
+            {
+              label: 'Save Layout Positions',
+              icon: PrimeIcons.SAVE,
+              command: onSaveLayout,
+            },
+          ]
+        : []),
     ];
-  }, [userPermissions, options, onAddSystem, pasteSystemsAndConnections, onPasteSystemsAnsConnections]);
+  }, [userPermissions, options, onAddSystem, pasteSystemsAndConnections, onPasteSystemsAnsConnections, onSaveLayout]);
 
   return (
     <>

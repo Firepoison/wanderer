@@ -41,4 +41,6 @@ export type SolarSystemConnection = {
   target: string;
 
   type?: ConnectionType;
+  /** ISO 8601 creation time; auto-layout anchors a cluster on its oldest connection. */
+  inserted_at?: string | null;
 };

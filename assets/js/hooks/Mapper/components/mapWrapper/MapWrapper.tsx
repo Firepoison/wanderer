@@ -17,7 +17,7 @@ import { Node, useReactFlow, Viewport, XYPosition } from 'reactflow';
 import { ContextMenuSystemMultiple, useContextMenuSystemMultipleHandlers } from '../contexts/ContextMenuSystemMultiple';
 
 import { emitMapEvent, useMapEventListener } from '@/hooks/Mapper/events';
-import { useCommandsSystems } from '@/hooks/Mapper/mapRootProvider/hooks/api';
+import { useCommandsSystems, useMapGetOption } from '@/hooks/Mapper/mapRootProvider/hooks/api';
 
 import { useDeleteSystems } from '@/hooks/Mapper/components/contexts/hooks';
 import {
@@ -67,7 +67,14 @@ export const MapWrapper = () => {
   const { getNodes } = useReactFlow();
 
   const { updateLinkSignatureToSystem } = useCommandsSystems();
-  const { open, ...systemContextProps } = useContextMenuSystemHandlers({ systems, hubs, userHubs, outCommand });
+  const rootSystemId = (useMapGetOption('root_system_id') as string) || '';
+  const { open, ...systemContextProps } = useContextMenuSystemHandlers({
+    systems,
+    hubs,
+    userHubs,
+    outCommand,
+    rootSystemId,
+  });
   const { handleSystemMultipleContext, ...systemMultipleCtxProps } = useContextMenuSystemMultipleHandlers();
 
   const [openSettings, setOpenSettings] = useState<string | null>(null);
@@ -319,6 +326,7 @@ export const MapWrapper = () => {
         systems={systems}
         hubs={hubs}
         userHubs={userHubs}
+        rootSystemId={rootSystemId}
         {...systemContextProps}
         onOpenSettings={handleOpenSettings}
         onTogglePing={handleTogglePing}

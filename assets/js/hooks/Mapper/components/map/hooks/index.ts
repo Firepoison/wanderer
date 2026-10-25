@@ -1,4 +1,6 @@
 export * from './useMapHandlers';
+export * from './useAutoLayout';
+export * from './useAbandonedDragFallback';
 export * from './useUpdateNodes';
 export * from './useNodesEdgesState';
 export * from './useBackgroundVars';

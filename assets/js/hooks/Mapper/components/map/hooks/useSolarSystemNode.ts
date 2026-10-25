@@ -7,7 +7,7 @@ import { useMapState } from '@/hooks/Mapper/components/map/MapProvider';
 import { useDoubleClick } from '@/hooks/Mapper/hooks/useDoubleClick';
 import { Regions, REGIONS_MAP, SPACE_TO_CLASS } from '@/hooks/Mapper/constants';
 import { isWormholeSpace } from '@/hooks/Mapper/components/map/helpers/isWormholeSpace';
-import { getSystemClassStyles } from '@/hooks/Mapper/components/map/helpers';
+import { getSystemClassStyles, isRootNode } from '@/hooks/Mapper/components/map/helpers';
 import { sortWHClasses } from '@/hooks/Mapper/helpers';
 import { CharacterTypeRaw, OutCommand, PingType, SystemSignature, WormholeDataRaw } from '@/hooks/Mapper/types';
 import { useUnsplashedSignatures } from './useUnsplashedSignatures';
@@ -38,6 +38,7 @@ export interface SolarSystemNodeVars {
   solarSystemId: string;
   solarSystemName: string | null;
   locked: boolean;
+  isRoot: boolean;
   hubs: string[];
   name: string | null;
   isConnecting: boolean;
@@ -97,6 +98,9 @@ export const useSolarSystemNode = (props: NodeProps<MapSolarSystemType>): SolarS
   const isTempSystemNameEnabled = useMapGetOption('show_temp_system_name') === 'true';
   const isShowLinkedSigId = useMapGetOption('show_linked_signature_id') === 'true';
   const isShowLinkedSigIdTempName = useMapGetOption('show_linked_signature_id_temp_name') === 'true';
+  const rootSystemId = useMapGetOption('root_system_id');
+  const isAutoLayoutEnabled = useMapGetOption('auto_layout_enabled') === 'true';
+  const isRoot = isRootNode(isAutoLayoutEnabled, rootSystemId, solar_system_id);
 
   const {
     data: {
@@ -204,6 +208,7 @@ export const useSolarSystemNode = (props: NodeProps<MapSolarSystemType>): SolarS
     effectName: effect_name,
     solarSystemId: solar_system_id.toString(),
     locked,
+    isRoot,
     hubs: hubsAsStrings,
     name,
     isConnecting,

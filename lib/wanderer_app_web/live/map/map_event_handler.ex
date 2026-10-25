@@ -40,6 +40,7 @@ defmodule WandererAppWeb.MapEventHandler do
   @map_system_events [
     :add_system,
     :update_system,
+    :update_systems,
     :systems_removed,
     :maybe_select_system
   ]
@@ -343,7 +344,7 @@ defmodule WandererAppWeb.MapEventHandler do
           type: type,
           ship_size_type: ship_size_type,
           locked: locked
-        } = _connection
+        } = connection
       ),
       do: %{
         id: "#{solar_system_source}_#{solar_system_target}",
@@ -353,7 +354,9 @@ defmodule WandererAppWeb.MapEventHandler do
         ship_size_type: ship_size_type,
         locked: locked,
         source: "#{solar_system_source}",
-        target: "#{solar_system_target}"
+        target: "#{solar_system_target}",
+        # Auto-layout anchors each cluster on its oldest connection (see anchoring.ts).
+        inserted_at: Map.get(connection, :inserted_at)
       }
 
   def map_ui_system(

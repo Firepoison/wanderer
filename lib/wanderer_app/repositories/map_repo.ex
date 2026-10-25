@@ -11,7 +11,12 @@ defmodule WandererApp.MapRepo do
     "show_temp_system_name" => "false",
     "restrict_offline_showing" => "false",
     "allowed_copy_for" => "admin_map",
-    "allowed_paste_for" => "add_system"
+    "allowed_paste_for" => "add_system",
+    "auto_layout_enabled" => "false",
+    "auto_layout_engine" => WandererApp.Map.LayoutEngines.default_engine_id(),
+    # Engine-specific settings, one bag per engine. See WandererApp.Map.LayoutEngines.
+    "auto_layout_options" => WandererApp.Map.LayoutEngines.default_options_json(),
+    "root_system_id" => ""
   }
 
   def get(map_id, relationships \\ []) do

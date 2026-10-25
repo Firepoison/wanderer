@@ -11,9 +11,10 @@ import { PrimeIcons } from 'primereact/api';
 import { ContextMenuSystemProps } from '@/hooks/Mapper/components/contexts';
 import { useWaypointMenu } from '@/hooks/Mapper/components/contexts/hooks';
 import { FastSystemActions } from '@/hooks/Mapper/components/contexts/components';
-import { useMapCheckPermissions } from '@/hooks/Mapper/mapRootProvider/hooks/api';
+import { useMapCheckPermissions, useMapGetOption } from '@/hooks/Mapper/mapRootProvider/hooks/api';
 import { UserPermission } from '@/hooks/Mapper/types/permissions.ts';
 import { isWormholeSpace } from '@/hooks/Mapper/components/map/helpers/isWormholeSpace.ts';
+import { rootNodeMenuItems } from '@/hooks/Mapper/components/map/helpers/rootNode.ts';
 import { getSystemStaticInfo } from '@/hooks/Mapper/mapRootProvider/hooks/useLoadSystemStatic';
 import { MapAddIcon, MapDeleteIcon } from '@/hooks/Mapper/icons';
 import { PingType } from '@/hooks/Mapper/types';
@@ -25,6 +26,7 @@ import { MenuItemWithInfo, WdMenuItem } from '@/hooks/Mapper/components/ui-kit';
 export const useContextMenuSystemItems = ({
   onDeleteSystem,
   onLockToggle,
+  onSetRootToggle,
   onHubToggle,
   onUserHubToggle,
   onTogglePing,
@@ -35,6 +37,7 @@ export const useContextMenuSystemItems = ({
   onOpenSettings,
   onWaypointSet,
   systemId,
+  rootSystemId,
   hubs,
   userHubs,
   systems,
@@ -46,7 +49,10 @@ export const useContextMenuSystemItems = ({
   const canLockSystem = useMapCheckPermissions([UserPermission.LOCK_SYSTEM]);
   const canManageSystem = useMapCheckPermissions([UserPermission.UPDATE_SYSTEM]);
   const canDeleteSystem = useMapCheckPermissions([UserPermission.DELETE_SYSTEM]);
+  const canAdminMap = useMapCheckPermissions([UserPermission.ADMIN_MAP]);
   const getUserRoutes = useUserRoute({ userHubs, systemId, onUserHubToggle });
+  // The root node only anchors auto-layout, so it is meaningless while auto-layout is off.
+  const isAutoLayoutEnabled = useMapGetOption('auto_layout_enabled') === 'true';
 
   const {
     data: { pings, isSubscriptionActive },
@@ -156,6 +162,14 @@ export const useContextMenuSystemItems = ({
           ]
         : []),
 
+      ...rootNodeMenuItems({
+        canAdminMap,
+        autoLayoutEnabled: isAutoLayoutEnabled,
+        rootSystemId,
+        systemId,
+        onToggle: onSetRootToggle,
+      }),
+
       ...(canDeleteSystem && !system.locked
         ? [
             { separator: true },
@@ -194,6 +208,10 @@ export const useContextMenuSystemItems = ({
     onHubToggle,
     canLockSystem,
     onLockToggle,
+    canAdminMap,
+    isAutoLayoutEnabled,
+    onSetRootToggle,
+    rootSystemId,
     canDeleteSystem,
     onDeleteSystem,
     onOpenSettings,

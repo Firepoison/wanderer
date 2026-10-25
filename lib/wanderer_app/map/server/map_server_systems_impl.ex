@@ -283,6 +283,73 @@ defmodule WandererApp.Map.Server.SystemsImpl do
           end
         )
 
+  @doc """
+  Batch form of `update_system_position/2`, for moves that touch many systems at once (cluster
+  and selection drags, saving the auto-layout). Reads the map's visible systems once, skips
+  systems whose stored position already matches, and sends the changed systems to map clients as
+  one `:update_systems` broadcast rather than one `:update_system` each, so moving a large chain
+  reaches every client as a single event. External `system_metadata_changed` events stay per
+  system, since that is the webhook/WebSocket contract.
+
+  Systems that are no longer visible are skipped: `update_position` also sets `visible: true`, so
+  a batch that raced the system's deletion would otherwise bring it back.
+  """
+  def update_system_positions(_map_id, []), do: :ok
+
+  def update_system_positions(map_id, updates) do
+    case WandererApp.MapSystemRepo.get_visible_by_map(map_id) do
+      {:ok, systems} ->
+        systems_by_solar_id = Map.new(systems, &{&1.solar_system_id, &1})
+
+        updated_systems =
+          updates
+          # A system listed twice keeps its last position, as sequential updates would.
+          |> Map.new(&{&1.solar_system_id, &1})
+          |> Map.values()
+          |> Enum.flat_map(&do_update_system_position(map_id, systems_by_solar_id, &1))
+
+        if updated_systems != [] do
+          Impl.broadcast!(map_id, :update_systems, updated_systems)
+        end
+
+        :ok
+
+      error ->
+        Logger.error("Failed to update system positions: #{inspect(error, pretty: true)}")
+        :ok
+    end
+  end
+
+  defp do_update_system_position(map_id, systems_by_solar_id, update) do
+    case Map.get(systems_by_solar_id, update.solar_system_id) do
+      nil ->
+        []
+
+      %{position_x: x, position_y: y} when x == update.position_x and y == update.position_y ->
+        []
+
+      system ->
+        position = %{position_x: update.position_x, position_y: update.position_y}
+
+        with :ok <- WandererApp.Map.update_system_by_solar_system_id(map_id, update),
+             {:ok, updated_system} <- WandererApp.MapSystemRepo.update_position(system, position) do
+          @ddrt.update(
+            updated_system.solar_system_id,
+            WandererApp.Map.PositionCalculator.get_system_bounding_rect(updated_system),
+            "rtree_#{map_id}"
+          )
+
+          touch_system_last_activity(map_id, updated_system)
+          broadcast_system_metadata_changed(map_id, updated_system)
+          [updated_system]
+        else
+          error ->
+            Logger.error("Failed to update system position: #{inspect(error, pretty: true)}")
+            []
+        end
+    end
+  end
+
   def add_hub(
         map_id,
         hub_info
@@ -355,6 +422,7 @@ defmodule WandererApp.Map.Server.SystemsImpl do
 
           track_systems_removed(map_id, user_id, character_id, [solar_system_id])
           remove_system_connections(map_id, [solar_system_id])
+          clear_root_if_removed(map_id, solar_system_id)
 
           try do
             cleanup_linked_signatures(map_id, [solar_system_id])
@@ -394,6 +462,26 @@ defmodule WandererApp.Map.Server.SystemsImpl do
   end
 
   defp track_systems_removed(_map_id, _user_id, _character_id, _removed_solar_system_ids), do: :ok
+
+  # The root anchors auto-layout only while its system is on the map. Left set, it would pull the
+  # system's old tree around itself if the system were ever added back.
+  defp clear_root_if_removed(map_id, solar_system_id) do
+    root = "#{solar_system_id}"
+
+    with {:ok, %{"root_system_id" => ^root}} <- WandererApp.Map.get_options(map_id),
+         {:ok, map} <- WandererApp.MapRepo.get(map_id),
+         {:ok, options} <- WandererApp.MapRepo.options_to_form_data(map),
+         options = Map.put(options, "root_system_id", ""),
+         {:ok, _map} <- WandererApp.MapRepo.update_options(map, options) do
+      Impl.update_options(map_id, options)
+    else
+      {:error, error} ->
+        Logger.error("Failed to clear the removed root system: #{inspect(error)}")
+
+      _not_the_root ->
+        :ok
+    end
+  end
 
   defp remove_system_connections(map_id, solar_system_ids_to_remove) do
     connections_to_remove =
@@ -1102,14 +1190,22 @@ defmodule WandererApp.Map.Server.SystemsImpl do
          map_id,
          updated_system
        ) do
-    WandererApp.Cache.put(
-      "map_#{map_id}:system_#{updated_system.id}:last_activity",
-      DateTime.utc_now(),
-      ttl: @system_inactive_timeout
-    )
+    touch_system_last_activity(map_id, updated_system)
 
     Impl.broadcast!(map_id, :update_system, updated_system)
 
+    broadcast_system_metadata_changed(map_id, updated_system)
+  end
+
+  defp touch_system_last_activity(map_id, updated_system),
+    do:
+      WandererApp.Cache.put(
+        "map_#{map_id}:system_#{updated_system.id}:last_activity",
+        DateTime.utc_now(),
+        ttl: @system_inactive_timeout
+      )
+
+  defp broadcast_system_metadata_changed(map_id, updated_system) do
     # ADDITIVE: Also broadcast to external event system (webhooks/WebSocket)
     # This may fail if the relay is not available (e.g., in tests), which is fine
     WandererApp.ExternalEvents.broadcast(map_id, :system_metadata_changed, %{

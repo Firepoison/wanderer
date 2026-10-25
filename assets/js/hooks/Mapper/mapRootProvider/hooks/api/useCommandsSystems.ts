@@ -53,14 +53,10 @@ export const useCommandsSystems = () => {
   const updateSystems = useCallback((updatedSystems: CommandUpdateSystems) => {
     const { update, systems } = ref.current;
 
-    const out = systems.map(current => {
-      const newSystem = updatedSystems.find(x => current.id === x.id);
-      if (!newSystem) {
-        return current;
-      }
-
-      return newSystem;
-    });
+    // Lookup map rather than a `find` per system: a batched update (a cluster drag, a saved
+    // layout) can carry most of the map's systems.
+    const byId = new Map(updatedSystems.map(s => [s.id, s]));
+    const out = systems.map(current => byId.get(current.id) ?? current);
 
     update({ systems: out }, true);
 

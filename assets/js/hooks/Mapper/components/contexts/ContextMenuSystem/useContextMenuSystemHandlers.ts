@@ -1,10 +1,11 @@
 import { useCallback, useRef, useState } from 'react';
 import { ContextMenu } from 'primereact/contextmenu';
 import { OutCommand, OutCommandHandler } from '@/hooks/Mapper/types/mapHandlers.ts';
-import { SolarSystemRawType } from '@/hooks/Mapper/types';
+import { SolarSystemRawType, SystemPositionUpdate } from '@/hooks/Mapper/types';
 import { WaypointSetContextHandler } from '@/hooks/Mapper/components/contexts/types.ts';
 import { ctxManager } from '@/hooks/Mapper/utils/contextManager.ts';
 import { useDeleteSystems } from '@/hooks/Mapper/components/contexts/hooks';
+import { emitStructureChange } from '@/hooks/Mapper/events';
 // import { PingType } from '@/hooks/Mapper/types/ping.ts';
 
 interface UseContextMenuSystemHandlersProps {
@@ -12,6 +13,7 @@ interface UseContextMenuSystemHandlersProps {
   userHubs: string[];
   systems: SolarSystemRawType[];
   outCommand: OutCommandHandler;
+  rootSystemId?: string;
 }
 
 export const useContextMenuSystemHandlers = ({
@@ -19,6 +21,7 @@ export const useContextMenuSystemHandlers = ({
   hubs,
   userHubs,
   outCommand,
+  rootSystemId,
 }: UseContextMenuSystemHandlersProps) => {
   const contextMenuRef = useRef<ContextMenu | null>(null);
 
@@ -26,8 +29,8 @@ export const useContextMenuSystemHandlers = ({
 
   const { deleteSystems } = useDeleteSystems();
 
-  const ref = useRef({ hubs, userHubs, system, systems, outCommand, deleteSystems });
-  ref.current = { hubs, userHubs, system, systems, outCommand, deleteSystems };
+  const ref = useRef({ hubs, userHubs, rootSystemId, system, systems, outCommand, deleteSystems });
+  ref.current = { hubs, userHubs, rootSystemId, system, systems, outCommand, deleteSystems };
 
   const open = useCallback((ev: any, systemId: string) => {
     setSystem(systemId);
@@ -54,11 +57,37 @@ export const useContextMenuSystemHandlers = ({
 
     const sysInfo = systems.find(x => x.id === system)!;
 
+    emitStructureChange({ systemIds: [system], unlocking: !!sysInfo.locked });
     outCommand({
       type: OutCommand.updateSystemLocked,
       data: {
         system_id: system,
         value: !sysInfo.locked,
+      },
+    });
+    setSystem(undefined);
+  }, []);
+
+  const onSetRootToggle = useCallback(() => {
+    const { system, rootSystemId, outCommand } = ref.current;
+    if (!system) {
+      return;
+    }
+
+    // The root anchors its cluster, so both the new and the previous root's clusters re-anchor.
+    // Their positions travel inside the root change rather than as a separate save: the root
+    // change is admin-only, and the save must not fail on its own (e.g. for an admin without a
+    // tracked character) while the change goes through.
+    let positions: SystemPositionUpdate[] = [];
+    emitStructureChange({
+      systemIds: rootSystemId ? [system, rootSystemId] : [system],
+      collect: collected => (positions = collected),
+    });
+    outCommand({
+      type: OutCommand.updateLayoutSettings,
+      data: {
+        root_system_id: rootSystemId === system ? '' : system,
+        positions,
       },
     });
     setSystem(undefined);
@@ -213,6 +242,7 @@ export const useContextMenuSystemHandlers = ({
     contextMenuRef,
     onDeleteSystem,
     onLockToggle,
+    onSetRootToggle,
     onHubToggle,
     onUserHubToggle,
     // onTogglePingRally,

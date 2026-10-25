@@ -124,6 +124,12 @@ export type SolarSystemRawType = {
   system_signatures: SystemSignature[];
 };
 
+/** A system's new stored position, as the position update commands take it. */
+export type SystemPositionUpdate = {
+  solar_system_id: string;
+  position: XYPosition;
+};
+
 export type SearchSystemItem = {
   class_title: string;
   constellation_name: string;
